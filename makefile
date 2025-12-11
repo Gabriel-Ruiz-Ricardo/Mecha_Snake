@@ -2,28 +2,25 @@
 SRC_DIR := src
 BIN_DIR := bin
 
-SFML := -lsfml-graphics -lsfml-window -lsfml-system -lsfml-audio -lbox2d
+SFML := -lsfml-graphics -lsfml-window -lsfml-system -lsfml-audio
 
-# Obtener todos los archivos .cpp en el directorio de origen
-CPP_FILES := $(wildcard $(SRC_DIR)/*.cpp)
+# Archivos fuente del juego Snake
+GAME_SRC := $(SRC_DIR)/04_Main.cpp $(SRC_DIR)/01_Snake.cpp $(SRC_DIR)/02_Barrier.cpp $(SRC_DIR)/03_GameLogic.cpp $(SRC_DIR)/06_SnakeRenderer.cpp
+GAME_EXE := $(BIN_DIR)/Snake.exe
 
-# Generar los nombres de los archivos .exe en el directorio de destino
-EXE_FILES := $(patsubst $(SRC_DIR)/%.cpp,$(BIN_DIR)/%.exe,$(CPP_FILES))
+# Regla por defecto para compilar el juego
+all: $(GAME_EXE)
 
-# Regla para compilar cada archivo .cpp y generar el archivo .exe correspondiente
-$(BIN_DIR)/%.exe: $(SRC_DIR)/%.cpp
-	g++ $< -o $@ $(SFML) -Iinclude
+# Compilar el ejecutable del juego
+$(GAME_EXE): $(GAME_SRC)
+	g++ $(GAME_SRC) -o $@ $(SFML) -Iinclude
 
-# Regla por defecto para compilar todos los archivos .cpp
-all: $(EXE_FILES)
-
-# Regla para ejecutar cada archivo .exe
-run%: $(BIN_DIR)/%.exe
+# Ejecutar el juego
+run: $(GAME_EXE)
 	./$<
 
-# Regla para limpiar los archivos generados
+# Limpiar los archivos generados
 clean:
-	rm -f $(EXE_FILES)
+	rm -f $(GAME_EXE)
 
-.PHONY: all clean
-.PHONY: run-%
+.PHONY: all clean run
