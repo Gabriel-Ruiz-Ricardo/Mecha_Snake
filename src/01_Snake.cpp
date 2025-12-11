@@ -31,18 +31,17 @@ void Snake::update() {
 void Snake::draw(sf::RenderWindow& window, int blockSize) {
     sf::RectangleShape rect({(float)blockSize, (float)blockSize});
     rect.setFillColor(color);
-    
-    for (size_t i = 0; i < body.size(); ++i) {
+    // Draw body and tail first
+    for (size_t i = 1; i < body.size(); ++i) {
         rect.setPosition((float)(body[i].x * blockSize), (float)(body[i].y * blockSize));
-        
-        // Cabeza más oscura
-        if (i == 0) {
-            sf::Color darkColor(color.r / 2, color.g / 2, color.b / 2);
-            rect.setFillColor(darkColor);
-        } else {
-            rect.setFillColor(color);
-        }
-        
+        rect.setFillColor(color);
+        window.draw(rect);
+    }
+    // Draw head last so it stays on top
+    if (!body.empty()) {
+        rect.setPosition((float)(body[0].x * blockSize), (float)(body[0].y * blockSize));
+        sf::Color darkColor(color.r / 2, color.g / 2, color.b / 2);
+        rect.setFillColor(darkColor);
         window.draw(rect);
     }
 }

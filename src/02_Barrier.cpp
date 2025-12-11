@@ -29,7 +29,9 @@ void Barrier::buildWalls() {
 
 void Barrier::draw(sf::RenderWindow& window, int blockSize) {
     sf::RectangleShape rect({(float)blockSize, (float)blockSize});
-    rect.setFillColor(sf::Color::White);
+    rect.setFillColor(sf::Color::Transparent);
+    rect.setOutlineColor(sf::Color::White);
+    rect.setOutlineThickness(1.f); // thinner border line
     
     for (const auto& wall : walls) {
         rect.setPosition((float)(wall.x * blockSize), (float)(wall.y * blockSize));

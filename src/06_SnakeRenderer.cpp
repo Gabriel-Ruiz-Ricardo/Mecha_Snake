@@ -5,8 +5,18 @@ SnakeRenderer::SnakeRenderer() = default;
 
 bool SnakeRenderer::loadTexture(sf::Texture& tex, const std::string& path) {
     if (!tex.loadFromFile(path)) {
-        std::cerr << "Failed to load texture: " << path << '\n';
-        return false;
+        // Try alternate path without the ".." prefix, since CWD may differ
+        std::string alt = path;
+        if (alt.rfind("../", 0) == 0) {
+            alt = alt.substr(3);
+            if (!tex.loadFromFile(alt)) {
+                std::cerr << "Failed to load texture: " << path << " (and alt: " << alt << ")\n";
+                return false;
+            }
+        } else {
+            std::cerr << "Failed to load texture: " << path << '\n';
+            return false;
+        }
     }
     return true;
 }
@@ -36,23 +46,26 @@ bool SnakeRenderer::loadSprites() {
     return allLoaded;
 }
 
-static void drawSprite(sf::RenderWindow& window, const sf::Texture& tex, int x, int y, int blockSize) {
+static void drawSprite(sf::RenderWindow& window, const sf::Texture& tex, int x, int y, int blockSize, float spriteScale) {
     sf::Sprite sprite(tex);
     float texW = (float)tex.getSize().x;
     float texH = (float)tex.getSize().y;
-    float scaleX = (float)blockSize / texW;
-    float scaleY = (float)blockSize / texH;
+    float sizeInPixels = (float)blockSize * spriteScale;
+    float scaleX = sizeInPixels / texW;
+    float scaleY = sizeInPixels / texH;
     sprite.setScale(scaleX, scaleY);
-    sprite.setPosition((float)(x * blockSize), (float)(y * blockSize));
+    sprite.setOrigin(texW/2.f, texH/2.f);
+    sprite.setPosition((float)(x * blockSize) + (float)blockSize/2.f, (float)(y * blockSize) + (float)blockSize/2.f);
     window.draw(sprite);
 }
 
-static void drawSpriteWithRotation(sf::RenderWindow& window, const sf::Texture& tex, int x, int y, int blockSize, int dirX, int dirY) {
+static void drawSpriteWithRotation(sf::RenderWindow& window, const sf::Texture& tex, int x, int y, int blockSize, int dirX, int dirY, float spriteScale, float extraRotation = 0.f) {
     sf::Sprite sprite(tex);
     float texW = (float)tex.getSize().x;
     float texH = (float)tex.getSize().y;
-    float scaleX = (float)blockSize / texW;
-    float scaleY = (float)blockSize / texH;
+    float sizeInPixels = (float)blockSize * spriteScale;
+    float scaleX = sizeInPixels / texW;
+    float scaleY = sizeInPixels / texH;
     
     float rotation = 0.f;
     bool flipX = false;
@@ -74,7 +87,7 @@ static void drawSpriteWithRotation(sf::RenderWindow& window, const sf::Texture& 
     }
     
     sprite.setScale(flipX ? -scaleX : scaleX, scaleY);
-    sprite.setRotation(rotation);
+    sprite.setRotation(rotation + extraRotation);
     
     // Ajustar posición para flip/rotación
     float centerX = (float)(x * blockSize) + (float)blockSize / 2.f;
@@ -87,17 +100,19 @@ static void drawSpriteWithRotation(sf::RenderWindow& window, const sf::Texture& 
 
 void SnakeRenderer::drawHead(sf::RenderWindow& window, int x, int y, int blockSize, int dirX, int dirY) {
     if (!loaded) return;
-    drawSpriteWithRotation(window, headTexture, x, y, blockSize, dirX, dirY);
+    drawSpriteWithRotation(window, headTexture, x, y, blockSize, dirX, dirY, spriteScale);
 }
 
 void SnakeRenderer::drawBody(sf::RenderWindow& window, int x, int y, int blockSize, int dirX, int dirY) {
     if (!loaded) return;
     // Rotate the body sprite according to the local direction between neighboring segments.
     // This will make horizontal segments display correctly (they were appearing vertical).
-    drawSpriteWithRotation(window, bodyTexture, x, y, blockSize, dirX, dirY);
+    drawSpriteWithRotation(window, bodyTexture, x, y, blockSize, dirX, dirY, spriteScale);
 }
 
 void SnakeRenderer::drawTail(sf::RenderWindow& window, int x, int y, int blockSize, int dirX, int dirY) {
     if (!loaded) return;
-    drawSpriteWithRotation(window, tailTexture, x, y, blockSize, dirX, dirY);
+    // Draw tail with configurable extra rotation (180 if enabled)
+    float extra = tailRotate180 ? 180.f : 0.f;
+    drawSpriteWithRotation(window, tailTexture, x, y, blockSize, dirX, dirY, spriteScale, extra);
 }
