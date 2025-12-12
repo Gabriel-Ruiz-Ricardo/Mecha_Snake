@@ -43,7 +43,7 @@ int main() {
     const float MOVE_INTERVAL = 0.08f; // Tiempo entre movimientos
     
     std::cout << "=== SNAKE GAME ===" << std::endl;
-    std::cout << "Controls: Arrow keys or WASD to move" << std::endl;
+    std::cout << "Controls: Arrow keys or W A S D to move" << std::endl;
     std::cout << "Press R to reset after Game Over" << std::endl;
     std::cout << "Press Enter to start from Menu" << std::endl;
     std::cout << "Press P to pause/resume" << std::endl;
@@ -99,8 +99,8 @@ int main() {
             game.update();
         }
         
-        // Renderizar
-        window.clear(sf::Color::Black);
+        // Renderizar - use grass green background color (#132f03)
+        window.clear(sf::Color(19, 47, 3));
         game.draw(window);
         window.display();
     }

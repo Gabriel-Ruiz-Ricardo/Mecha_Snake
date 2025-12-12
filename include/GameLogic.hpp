@@ -82,6 +82,12 @@ private:
     sf::Texture texGomu;
     sf::Texture texMera;
     sf::Texture texOpe;
+    // UI control key textures
+    sf::Texture texW;
+    sf::Texture texA;
+    sf::Texture texS;
+    sf::Texture texD;
+    sf::Texture texP;
     // UI
     sf::Font uiFont;
     sf::Font titleFont; // second font for title/pause

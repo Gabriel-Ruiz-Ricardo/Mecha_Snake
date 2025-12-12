@@ -180,7 +180,9 @@ void GameLogic::update() {
     if (showCountdown) {
         float countdownElapsed = countdownClock.getElapsedTime().asSeconds();
         if (countdownElapsed >= 4.0f) {
-            // Countdown finished, hide it
+            // Countdown finished, hide it and ensure the countdown time is NOT
+            // counted as play time by adding it to pausedAccumSeconds.
+            pausedAccumSeconds += countdownClock.getElapsedTime().asSeconds();
             showCountdown = false;
         } else if (countdownElapsed >= 3.0f) {
             countdownNumber = 0; // "START"
@@ -366,6 +368,13 @@ void GameLogic::update() {
         state = State::GameOver;
         finalElapsedSeconds = startClock.getElapsedTime().asSeconds() - pausedAccumSeconds;
         std::cout << "Game Over! Fruit timer reached zero. Score: " << score << std::endl;
+        // Setup animated scoring like collision GameOver: add time bonus animation
+        baseScoreOnGameOver = score;
+        timeBonusRemaining = (int)finalElapsedSeconds;
+        animatedScore = baseScoreOnGameOver;
+        scoreAnimationDone = false;
+        scoreAnimClock.restart();
+        // If beat high score, defer name entry until after animation finishes
         if (score > highScore) {
             awaitingNameEntry = true;
             nameBuffer.clear();
@@ -383,7 +392,7 @@ void GameLogic::draw(sf::RenderWindow& window) {
     // If in menu, draw title and prompt and return
     if (state == State::Menu) {
         if (titleFont.getInfo().family.size()) {
-            std::string s = "SNAKE";
+            std::string s = "Mecha-Snake";
             int fontSize = std::max(64, blockSize * 2);
             float totalWidth = 0.f;
             std::vector<sf::Text> letters;
@@ -428,29 +437,100 @@ void GameLogic::draw(sf::RenderWindow& window) {
         }
             // Controls panel in bottom-left inside the main area
             {
-                float left = (float)blockSize * 0.6f;
+                // Position controls panel inside the play frame (to the left side, but not overlapping walls)
+                // Use the left inner cell (minX + 1) and add a small padding
+                float left = (float)(barriers.getMinX() + 1) * (float)blockSize + (float)blockSize * 0.25f;
                 float bottom = (float)(gridHeight * blockSize) - (float)blockSize * 12.0f;
 
                 sf::Text ctrlTitle("Controls:", uiFont, std::max(18, blockSize / 2));
                 ctrlTitle.setFillColor(sf::Color::White);
-                ctrlTitle.setPosition(left, bottom);
+                // Raise the Controls: title slightly higher so it doesn't overlap the key images
+                // Apply same vertical offset as the control block
+                float controlsYOffsetLocal = (float)blockSize * 2.0f;
+                ctrlTitle.setPosition(left, bottom - (float)blockSize * 1.6f - controlsYOffsetLocal);
                 window.draw(ctrlTitle);
 
-                // Draw W above A S D layout with more spacing
-                sf::Text wText("  W  ", uiFont, std::max(20, blockSize / 2));
-                wText.setFillColor(sf::Color::White);
-                wText.setPosition(left + (float)blockSize * 1.8f, bottom + (float)blockSize * 1.2f);
-                window.draw(wText);
+                // Center reference X for control icons relative to the Controls: title
+                sf::FloatRect ctrlBounds = ctrlTitle.getLocalBounds();
+                float ctrlCenterX = left + ctrlBounds.width / 2.f;
 
-                sf::Text asdText("A S D", uiFont, std::max(20, blockSize / 2));
-                asdText.setFillColor(sf::Color::White);
-                asdText.setPosition(left + (float)blockSize * 1.2f, bottom + (float)blockSize * 2.2f);
-                window.draw(asdText);
+                // Vertical positions: start a bit below the title, then leave blank lines
+                float lineSpacing = (float)blockSize * 2.2f; // increased spacing to avoid overlap
+                // Offset controls upward so they stay inside play frame
+                float controlsYOffset = (float)blockSize * 2.0f; // move block up this much
+                float yStart = bottom + (float)blockSize * 1.2f - controlsYOffset; // one 'enter' below Controls:
+                float yW = yStart; // W top
+                float yA = yW + lineSpacing; // A
+                float yS = yW + lineSpacing * 2.0f; // S
+                float yD = yW + lineSpacing * 3.0f; // D
+                float yP = yW + lineSpacing * 4.0f; // P below D
 
-                sf::Text pText("P: Pause", uiFont, std::max(16, blockSize / 2));
-                pText.setFillColor(sf::Color::White);
-                pText.setPosition(left, bottom + (float)blockSize * 3.5f);
-                window.draw(pText);
+                // Draw individual key images W/A/S/D and their labels as separate lines
+                float keySpriteX = left + (float)blockSize * 0.6f;
+                float keySize = (float)blockSize * 1.6f; // size for each key image
+                auto drawKeyLine = [&](const sf::Texture &tex, const std::string &letterFallback, const std::string &label, float y){
+                    if (tex.getSize().x > 0 && tex.getSize().y > 0) {
+                        sf::Sprite s;
+                        s.setTexture(tex);
+                        sf::Vector2u ts = tex.getSize();
+                        float kscale = keySize / (float)ts.x;
+                        s.setScale(kscale, kscale);
+                        s.setOrigin((float)ts.x / 2.f, (float)ts.y / 2.f);
+                        s.setPosition(keySpriteX, y);
+                        window.draw(s);
+
+                        sf::Text lab(std::string(" -> ") + label, uiFont, std::max(16, blockSize / 2));
+                        lab.setFillColor(sf::Color::White);
+                        float labelX = keySpriteX + ((float)ts.x * kscale) * 0.5f + (float)blockSize * 0.2f;
+                        lab.setPosition(labelX, y - (float)blockSize * 0.15f);
+                        window.draw(lab);
+                    } else {
+                        sf::Text keyTxt(letterFallback, uiFont, std::max(20, blockSize / 2));
+                        keyTxt.setFillColor(sf::Color::White);
+                        sf::FloatRect kb = keyTxt.getLocalBounds();
+                        keyTxt.setOrigin(kb.width / 2.f, kb.height / 2.f);
+                        keyTxt.setPosition(keySpriteX, y);
+                        window.draw(keyTxt);
+
+                        sf::Text lab(std::string(" -> ") + label, uiFont, std::max(16, blockSize / 2));
+                        lab.setFillColor(sf::Color::White);
+                        lab.setPosition(keySpriteX + (float)blockSize * 1.0f, y - (float)blockSize * 0.15f);
+                        window.draw(lab);
+                    }
+                };
+
+                // Draw W, A, S, D lines
+                drawKeyLine(texW, "W", "Up", yW);
+                drawKeyLine(texA, "A", "Left", yA);
+                drawKeyLine(texS, "S", "Down", yS);
+                drawKeyLine(texD, "D", "Right", yD);
+
+                // P pause key: show sprite then label; fallback to text if missing
+                if (texP.getSize().x > 0 && texP.getSize().y > 0) {
+                    sf::Sprite pSprite;
+                    pSprite.setTexture(texP);
+                    sf::Vector2u pts = texP.getSize();
+                    // Use the same `keySize` as other key sprites, so P matches W/A/S/D
+                    float pscale = keySize / (float)pts.x;
+                    // Use uniform scale to preserve aspect ratio
+                    pSprite.setScale(pscale, pscale);
+                    pSprite.setOrigin((float)pts.x / 2.f, (float)pts.y / 2.f);
+                    // Place P sprite in the left side of control block and add spacing
+                    float pSpriteX = keySpriteX; // align with other keys
+                    pSprite.setPosition(pSpriteX, yP);
+                    window.draw(pSprite);
+                    // Show arrow plus Pause label, positioned to the right of P sprite
+                    sf::Text pLabel(" -> Pause", uiFont, std::max(16, blockSize / 2));
+                    pLabel.setFillColor(sf::Color::White);
+                    float pLabelX = pSpriteX + ((float)pts.x * pscale) * 0.5f + (float)blockSize * 0.2f;
+                    pLabel.setPosition(pLabelX, yP - (float)blockSize * 0.2f);
+                    window.draw(pLabel);
+                } else {
+                    sf::Text pText("P -> Pause", uiFont, std::max(16, blockSize / 2));
+                    pText.setFillColor(sf::Color::White);
+                    pText.setPosition(left + (float)blockSize * 0.6f, yP);
+                    window.draw(pText);
+                }
             }
         // Show Ctrl+R reset hint in lower right corner (larger)
         if (titleFont.getInfo().family.size()) {
@@ -614,14 +694,19 @@ void GameLogic::draw(sf::RenderWindow& window) {
         if (titleFont.getInfo().family.size()) {
             float t = pauseClock.getElapsedTime().asSeconds();
             bool visible = (fmod(t, 1.0f) < 0.5f);
-            if (visible) {
+                if (visible) {
                 sf::Text ptext("PAUSE", titleFont, std::max(48, blockSize * 2));
                 ptext.setFillColor(sf::Color::White);
                 ptext.setOutlineColor(sf::Color::Black);
                 ptext.setOutlineThickness(3.f);
                 sf::FloatRect b = ptext.getLocalBounds();
                 ptext.setOrigin(b.width / 2.f, b.height / 2.f);
-                ptext.setPosition((float)(gridWidth * blockSize) / 2.f, (float)(gridHeight * blockSize) / 2.f);
+                // Move PAUSE title higher — align like Game Over (quarter screen height)
+                float pauseTitleY = (float)(gridHeight * blockSize) / 4.f;
+                // Spacing constants to control layout
+                float pauseTitleToResume = (float)blockSize * 4.5f; // more space after title
+                float pauseResumeToMenu = (float)blockSize * 2.6f;  // extra blank line between subtitles
+                ptext.setPosition((float)(gridWidth * blockSize) / 2.f, pauseTitleY);
                 window.draw(ptext);
 
                 // Show resume instructions separated on multiple lines with titleFont
@@ -629,7 +714,8 @@ void GameLogic::draw(sf::RenderWindow& window) {
                 resumeText.setFillColor(sf::Color::White);
                 sf::FloatRect rb = resumeText.getLocalBounds();
                 resumeText.setOrigin(rb.width / 2.f, rb.height / 2.f);
-                resumeText.setPosition((float)(gridWidth * blockSize) / 2.f, (float)(gridHeight * blockSize) / 2.f + (float)blockSize * 3.5f);
+                // More space below title (relative to title Y)
+                resumeText.setPosition((float)(gridWidth * blockSize) / 2.f, pauseTitleY + pauseTitleToResume);
                 window.draw(resumeText);
 
                 // Show exit instruction on separate line below with more space
@@ -637,7 +723,8 @@ void GameLogic::draw(sf::RenderWindow& window) {
                 menuText.setFillColor(sf::Color::White);
                 sf::FloatRect mb = menuText.getLocalBounds();
                 menuText.setOrigin(mb.width / 2.f, mb.height / 2.f);
-                menuText.setPosition((float)(gridWidth * blockSize) / 2.f, (float)(gridHeight * blockSize) / 2.f + (float)blockSize * 4.8f);
+                // Extra blank line between resume and menu (relative to resume position)
+                menuText.setPosition((float)(gridWidth * blockSize) / 2.f, pauseTitleY + pauseTitleToResume + pauseResumeToMenu);
                 window.draw(menuText);
             }
         }
@@ -898,6 +985,38 @@ void GameLogic::loadFruitTextures() {
         if (texOpe.loadFromFile(p)) std::cout << "Loaded texture: " << p << "\n";
         else std::cerr << "Failed to load texture file (even though found): " << p << "\n";
     } else std::cerr << "ope_ope.png not found in candidates\n";
+
+    // Load UI control key textures (W/A/S/D and P)
+    // Load individual key images W/A/S/D
+    p = findAssetPath("assets/images/W.png");
+    if (!p.empty()) {
+        if (texW.loadFromFile(p)) std::cout << "Loaded texture: " << p << "\n";
+        else std::cerr << "Failed to load texture file (even though found): " << p << "\n";
+    } else std::cerr << "W.png not found in candidates\n";
+
+    p = findAssetPath("assets/images/A.png");
+    if (!p.empty()) {
+        if (texA.loadFromFile(p)) std::cout << "Loaded texture: " << p << "\n";
+        else std::cerr << "Failed to load texture file (even though found): " << p << "\n";
+    } else std::cerr << "A.png not found in candidates\n";
+
+    p = findAssetPath("assets/images/S.png");
+    if (!p.empty()) {
+        if (texS.loadFromFile(p)) std::cout << "Loaded texture: " << p << "\n";
+        else std::cerr << "Failed to load texture file (even though found): " << p << "\n";
+    } else std::cerr << "S.png not found in candidates\n";
+
+    p = findAssetPath("assets/images/D.png");
+    if (!p.empty()) {
+        if (texD.loadFromFile(p)) std::cout << "Loaded texture: " << p << "\n";
+        else std::cerr << "Failed to load texture file (even though found): " << p << "\n";
+    } else std::cerr << "D.png not found in candidates\n";
+
+    p = findAssetPath("assets/images/P.png");
+    if (!p.empty()) {
+        if (texP.loadFromFile(p)) std::cout << "Loaded texture: " << p << "\n";
+        else std::cerr << "Failed to load texture file (even though found): " << p << "\n";
+    } else std::cerr << "P.png not found in candidates\n";
 }
 
 void GameLogic::spawnCheck(float nowSeconds) {
