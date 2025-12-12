@@ -79,6 +79,9 @@ int main() {
                     } else if (game.isGameOver()) {
                         game.reset();
                         game.startGame();
+                    } else if (game.isPaused()) {
+                        // allow Enter to resume from pause
+                        game.togglePause();
                     }
                 }
             }

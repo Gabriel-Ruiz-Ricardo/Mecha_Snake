@@ -1,22 +1,37 @@
 #include "SnakeRenderer.hpp"
 #include <iostream>
+#include <fstream>
 
 SnakeRenderer::SnakeRenderer() = default;
 
 bool SnakeRenderer::loadTexture(sf::Texture& tex, const std::string& path) {
-    if (!tex.loadFromFile(path)) {
-        // Try alternate path without the ".." prefix, since CWD may differ
-        std::string alt = path;
-        if (alt.rfind("../", 0) == 0) {
-            alt = alt.substr(3);
-            if (!tex.loadFromFile(alt)) {
-                std::cerr << "Failed to load texture: " << path << " (and alt: " << alt << ")\n";
-                return false;
-            }
-        } else {
-            std::cerr << "Failed to load texture: " << path << '\n';
-            return false;
+    auto findAsset = [&](const std::string &p)->std::string {
+        // try exact
+        std::ifstream f(p);
+        if (f.good()) { f.close(); return p; }
+        // if starts with ../ try without it
+        if (p.rfind("../", 0) == 0) {
+            std::string alt = p.substr(3);
+            std::ifstream f2(alt);
+            if (f2.good()) { f2.close(); return alt; }
         }
+        // try with ../ prefix if not present
+        if (p.rfind("../", 0) != 0) {
+            std::string alt = std::string("../") + p;
+            std::ifstream f2(alt);
+            if (f2.good()) { f2.close(); return alt; }
+        }
+        return std::string();
+    };
+
+    std::string candidate = findAsset(path);
+    if (candidate.empty()) {
+        std::cerr << "Failed to find texture file: " << path << '\n';
+        return false;
+    }
+    if (!tex.loadFromFile(candidate)) {
+        std::cerr << "Failed to load texture from: " << candidate << '\n';
+        return false;
     }
     return true;
 }

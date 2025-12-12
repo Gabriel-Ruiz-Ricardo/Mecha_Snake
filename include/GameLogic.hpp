@@ -37,6 +37,7 @@ public:
     void reset();
     void setSpriteScale(float s);
     void togglePause();
+    void goToMenu();
     void startGame();
     void toggleTailRotate();
     bool canRestart() const { return !awaitingNameEntry; }
@@ -86,13 +87,42 @@ private:
     sf::Font titleFont; // second font for title/pause
     sf::Text scoreText;
     sf::Text timerText;
+    sf::Text fruitTimerText;
     sf::Clock startClock;
     float elapsedPlaySeconds = 0.f; // time excluding paused
     float pausedAccumSeconds = 0.f;
     float finalElapsedSeconds = 0.f; // store elapsed seconds when game over
     sf::Clock pauseClock;
     bool paused = false;
+    // Fruit countdown (separate from play timer)
+    float fruitCountdown = 20.f; // initial value in seconds
+    // last update time for delta computations
+    float lastUpdateSeconds = 0.f;
+
+    // Portal support
+    struct Portal { int x; int y; bool active = false; bool isExit = false; };
+    Portal portalEntrance;
+    Portal portalExit;
+    bool inPortalMode = false; // invulnerable until regrow
+    int portalTargetLength = 0;
+    int nextPortalScore = 250;
+    // Regrow while exiting portal
+    float portalRegrowAccum = 0.f;
+    float portalRegrowInterval = 0.4f; // seconds between auto-grow steps
     enum class State { Menu, Playing, Paused, GameOver };
     State state = State::Menu;
     float spriteScale = 2.0f;
+    
+    // Countdown timer for 3-2-1-START display
+    bool showCountdown = false;
+    int countdownNumber = 3;
+    sf::Clock countdownClock;
+    sf::Text countdownText;
+
+    // Game over score animation
+    int baseScoreOnGameOver = 0;
+    int timeBonusRemaining = 0;
+    int animatedScore = 0;
+    bool scoreAnimationDone = false;
+    sf::Clock scoreAnimClock;
 };

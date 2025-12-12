@@ -61,6 +61,16 @@ void Snake::grow() {
     body.push_back(tail);
 }
 
+void Snake::setBody(const std::vector<Cell>& b) {
+    body = b;
+}
+
+void Snake::shrinkTo(int len) {
+    if (len < 1) len = 1;
+    if ((int)body.size() <= len) return;
+    body.resize((size_t)len);
+}
+
 void Snake::reset(int startX, int startY) {
     body.clear();
     body.push_back({startX, startY});        // head

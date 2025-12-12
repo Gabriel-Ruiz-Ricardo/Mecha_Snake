@@ -19,6 +19,8 @@ public:
     
     void grow();
     void reset(int startX, int startY);
+    void setBody(const std::vector<Cell>& b);
+    void shrinkTo(int len);
     
 private:
     std::vector<Cell> body;

@@ -7,6 +7,7 @@
 #include <vector>
 #include <fstream>
 #include <sstream>
+#include <fstream>
 
 GameLogic::GameLogic(int gridWidth, int gridHeight, int blockSize)
     : gridWidth(gridWidth), gridHeight(gridHeight), blockSize(blockSize),
@@ -21,24 +22,33 @@ GameLogic::GameLogic(int gridWidth, int gridHeight, int blockSize)
     } else {
         std::cout << "Failed to load some weedle sprites\n";
     }
+
     // Set sprite scale for renderer
     renderer.setSpriteScale(spriteScale);
 
-    // Load UI font (try Minecraft first then fallback) and setup texts
-    // Try preferred path; if it fails, try without the ".." prefix
-    bool fontLoaded = false;
-    if (uiFont.loadFromFile("../assets/fonts/Minecraft.ttf")) {
-        std::cout << "Loaded UI font: ../assets/fonts/Minecraft.ttf\n";
-        fontLoaded = true;
-    } else if (uiFont.loadFromFile("assets/fonts/Minecraft.ttf")) {
-        std::cout << "Loaded UI font: assets/fonts/Minecraft.ttf\n";
-        fontLoaded = true;
-    } else if (uiFont.loadFromFile("../assets/fonts/HOMOARAK.TTF")) {
-        std::cout << "Loaded UI font: ../assets/fonts/HOMOARAK.TTF\n";
-        fontLoaded = true;
-    } else if (uiFont.loadFromFile("assets/fonts/HOMOARAK.TTF")) {
-        std::cout << "Loaded UI font: assets/fonts/HOMOARAK.TTF\n";
-        fontLoaded = true;
+    // Load wall texture for barriers
+    barriers.loadTexture("assets/images/muro.jpeg");
+
+    // Load UI font (robust search across candidate paths)
+    auto findAssetPath = [&](const std::string &p)->std::string {
+        std::ifstream f(p);
+        if (f.good()) { f.close(); return p; }
+        if (p.rfind("../", 0) == 0) {
+            std::string alt = p.substr(3);
+            std::ifstream f2(alt);
+            if (f2.good()) { f2.close(); return alt; }
+        } else {
+            std::string alt = std::string("../") + p;
+            std::ifstream f2(alt);
+            if (f2.good()) { f2.close(); return alt; }
+        }
+        return std::string();
+    };
+
+    std::string fontPath = findAssetPath("assets/fonts/Minecraft.ttf");
+    if (fontPath.empty()) fontPath = findAssetPath("assets/fonts/HOMOARAK.TTF");
+    if (!fontPath.empty() && uiFont.loadFromFile(fontPath)) {
+        std::cout << "Loaded UI font: " << fontPath << "\n";
     } else {
         std::cerr << "Failed to load UI font from assets/fonts\n";
     }
@@ -56,35 +66,56 @@ GameLogic::GameLogic(int gridWidth, int gridHeight, int blockSize)
     timerText.setCharacterSize(std::max(24, (int)(blockSize * 1.25f)));
     timerText.setStyle(sf::Text::Bold);
 
+    fruitTimerText.setFont(uiFont);
+    fruitTimerText.setFillColor(sf::Color::White);
+    fruitTimerText.setOutlineColor(sf::Color::Black);
+    fruitTimerText.setOutlineThickness(2.f);
+    fruitTimerText.setCharacterSize(std::max(20, (int)(blockSize * 1.0f)));
+    fruitTimerText.setStyle(sf::Text::Bold);
+
+    countdownText.setFont(uiFont);
+    countdownText.setFillColor(sf::Color::Yellow);
+    countdownText.setOutlineColor(sf::Color::Black);
+    countdownText.setOutlineThickness(3.f);
+    countdownText.setCharacterSize(std::max(80, (int)(blockSize * 4.0f)));
+    countdownText.setStyle(sf::Text::Bold);
+
     startClock.restart();
     pausedAccumSeconds = 0.f;
     paused = false;
     state = State::Menu;
 
-    // Load title font (HOMOARAK)
-    if (titleFont.loadFromFile("../assets/fonts/HOMOARAK.TTF")) {
-        std::cout << "Loaded title font: ../assets/fonts/HOMOARAK.TTF\n";
-    } else if (titleFont.loadFromFile("assets/fonts/HOMOARAK.TTF")) {
-        std::cout << "Loaded title font: assets/fonts/HOMOARAK.TTF\n";
+    // Load title font (HOMOARAK) separately (try both)
+    std::string titlePath = findAssetPath("assets/fonts/HOMOARAK.TTF");
+    if (!titlePath.empty() && titleFont.loadFromFile(titlePath)) {
+        std::cout << "Loaded title font: " << titlePath << "\n";
     } else {
         std::cerr << "Failed to load title font (HOMOARAK)\n";
     }
 
     // Load background music if present
-    if (music.openFromFile("../assets/music/snow_city.mp3")) {
+    // Load music using findAssetPath helper
+    std::string musicPath = findAssetPath("assets/music/snow_city.mp3");
+    if (!musicPath.empty() && music.openFromFile(musicPath)) {
         music.setLoop(true);
         music.setVolume(50.f);
         music.play();
-        std::cout << "Background music loaded and playing\n";
+        std::cout << "Background music loaded and playing: " << musicPath << "\n";
     } else {
         std::cout << "Background music not found or failed to load\n";
     }
     // Load fruit textures and high score
     loadFruitTextures();
     loadHighScore();
+    // initialize fruit countdown and update tracker
+    fruitCountdown = 20.f;
+    lastUpdateSeconds = 0.f;
 }
 
 void GameLogic::spawnFood() {
+    // Do not spawn fruits once score threshold reached for portal sequence
+    if (score >= 30) return;
+
     // Spawn a common Gomu fruit at a valid position
     std::uniform_int_distribution<int> distX(barriers.getMinX() + 1, barriers.getMaxX() - 1);
     std::uniform_int_distribution<int> distY(barriers.getMinY() + 1, barriers.getMaxY() - 1);
@@ -102,6 +133,7 @@ void GameLogic::spawnFood() {
         for (const auto &of : fruits) {
             if (of.x == f.x && of.y == f.y) { valid = false; break; }
         }
+            if (barriers.checkCollision({f.x, f.y})) valid = false;
         attempts++;
     }
     if (!valid) return;
@@ -144,39 +176,112 @@ void GameLogic::update() {
     if (state == State::Menu) return;
     if (state == State::Paused) return;
 
+    // Handle countdown display (3-2-1-START)
+    if (showCountdown) {
+        float countdownElapsed = countdownClock.getElapsedTime().asSeconds();
+        if (countdownElapsed >= 4.0f) {
+            // Countdown finished, hide it
+            showCountdown = false;
+        } else if (countdownElapsed >= 3.0f) {
+            countdownNumber = 0; // "START"
+        } else if (countdownElapsed >= 2.0f) {
+            countdownNumber = 1;
+        } else if (countdownElapsed >= 1.0f) {
+            countdownNumber = 2;
+        } else {
+            countdownNumber = 3;
+        }
+        // Don't update game while countdown is showing
+        return;
+    }
+
     // accumulate play time using startClock minus pausedAccumSeconds
     elapsedPlaySeconds = startClock.getElapsedTime().asSeconds() - pausedAccumSeconds;
+    // compute delta since last update to decrement fruit countdown
+    float delta = 0.f;
+    if (lastUpdateSeconds <= 0.f) {
+        delta = 0.f;
+    } else {
+        delta = elapsedPlaySeconds - lastUpdateSeconds;
+        if (delta < 0.f) delta = 0.f;
+    }
+    lastUpdateSeconds = elapsedPlaySeconds;
+    // reduce fruit countdown
+    fruitCountdown -= delta;
+
+    // portal regrow auto-growth while in portal mode
+    if (inPortalMode && (int)snake.getBody().size() < portalTargetLength) {
+        portalRegrowAccum += delta;
+        if (portalRegrowAccum >= portalRegrowInterval) {
+            portalRegrowAccum -= portalRegrowInterval;
+            snake.grow();
+        }
+    }
 
     snake.update();
     Cell head = snake.getHead();
-    
-    // Comprobar colisión con barreras
-    if (barriers.checkCollision(head)) {
-        gameOver = true;
-        state = State::GameOver;
-        finalElapsedSeconds = startClock.getElapsedTime().asSeconds() - pausedAccumSeconds;
-        std::cout << "Game Over! You hit a wall. Score: " << score << std::endl;
-        if (score > highScore) {
-            awaitingNameEntry = true;
-            nameBuffer.clear();
-        } else {
-            awaitingNameEntry = false;
+    // If stepped on a portal entrance, trigger map change and teleport
+    if (portalEntrance.active && head.x == portalEntrance.x && head.y == portalEntrance.y) {
+        // record old length
+        int oldLen = (int)snake.getBody().size();
+        // deactivate entrance
+        portalEntrance.active = false;
+
+        // regenerate barriers randomly (avoid current snake body positions)
+        barriers.generateRandom(rng, gridWidth, gridHeight, snake.getBody());
+
+        // choose exit location in new map
+        std::uniform_int_distribution<int> distX(barriers.getMinX() + 1, barriers.getMaxX() - 1);
+        std::uniform_int_distribution<int> distY(barriers.getMinY() + 1, barriers.getMaxY() - 1);
+        for (int tries = 0; tries < 300; ++tries) {
+            int ex = distX(rng);
+            int ey = distY(rng);
+            Cell ec{ex, ey};
+            bool ok = true;
+            for (const auto &f : fruits) if (f.x == ex && f.y == ey) { ok = false; break; }
+            if (ok && !barriers.checkCollision(ec)) {
+                portalExit.x = ex; portalExit.y = ey; portalExit.active = true; portalExit.isExit = true;
+                break;
+            }
         }
-        return;
+
+        // teleport snake to exit and shrink to 1, make invulnerable until regrow
+        std::vector<Cell> nb;
+        nb.push_back({portalExit.x, portalExit.y});
+        snake.setBody(nb);
+        snake.shrinkTo(1);
+        inPortalMode = true;
+        portalTargetLength = oldLen;
+        // reset regrow accumulator
+        portalRegrowAccum = 0.f;
     }
     
-    // Comprobar colisión consigo misma
-    if (snake.checkSelfCollision()) {
+    // Comprobar colisión con barreras (omit during portal invulnerability)
+    if (!inPortalMode && barriers.checkCollision(head)) {
         gameOver = true;
         state = State::GameOver;
         finalElapsedSeconds = startClock.getElapsedTime().asSeconds() - pausedAccumSeconds;
-        std::cout << "Game Over! You collided with yourself. Score: " << score << std::endl;
-        if (score > highScore) {
-            awaitingNameEntry = true;
-            nameBuffer.clear();
-        } else {
-            awaitingNameEntry = false;
-        }
+        // prepare score animation: base score + time bonus will be animated
+        baseScoreOnGameOver = score;
+        timeBonusRemaining = (int)finalElapsedSeconds;
+        animatedScore = baseScoreOnGameOver;
+        scoreAnimationDone = false;
+        scoreAnimClock.restart();
+        awaitingNameEntry = false; // will be set after animation if record
+        return;
+    }
+
+    // Comprobar colisión consigo misma
+    if (!inPortalMode && snake.checkSelfCollision()) {
+        gameOver = true;
+        state = State::GameOver;
+        finalElapsedSeconds = startClock.getElapsedTime().asSeconds() - pausedAccumSeconds;
+        baseScoreOnGameOver = score;
+        timeBonusRemaining = (int)finalElapsedSeconds;
+        animatedScore = baseScoreOnGameOver;
+        scoreAnimationDone = false;
+        scoreAnimClock.restart();
+        awaitingNameEntry = false;
         return;
     }
     
@@ -188,6 +293,8 @@ void GameLogic::update() {
                 case Fruit::Type::Gomu:
                     score += 1;
                     snake.grow();
+                    // grant time for gomu
+                    fruitCountdown += 5.f;
                     // classic: when gomu eaten, spawn another gomu elsewhere
                     fruits.erase(fruits.begin() + (int)i);
                     spawnFood();
@@ -197,6 +304,7 @@ void GameLogic::update() {
                     // grow 2 segments
                     snake.grow();
                     snake.grow();
+                    fruitCountdown += 10.f;
                     fruits.erase(fruits.begin() + (int)i);
                     break;
                 case Fruit::Type::Ope:
@@ -205,6 +313,7 @@ void GameLogic::update() {
                     snake.grow();
                     snake.grow();
                     snake.grow();
+                    fruitCountdown += 15.f;
                     fruits.erase(fruits.begin() + (int)i);
                     break;
             }
@@ -221,6 +330,50 @@ void GameLogic::update() {
 
     // remove expired temporary fruits
     removeExpired(now);
+
+    // PORTAL: spawn entrance portal every X points
+    if (score >= nextPortalScore && !portalEntrance.active && !inPortalMode) {
+        // place entrance at random free cell
+        std::uniform_int_distribution<int> distX(barriers.getMinX() + 1, barriers.getMaxX() - 1);
+        std::uniform_int_distribution<int> distY(barriers.getMinY() + 1, barriers.getMaxY() - 1);
+        for (int tries = 0; tries < 200; ++tries) {
+            int px = distX(rng);
+            int py = distY(rng);
+            Cell c{px, py};
+            bool ok = true;
+            for (const auto &bcell : snake.getBody()) if (bcell == c) { ok = false; break; }
+            for (const auto &fw : fruits) if (fw.x == px && fw.y == py) { ok = false; break; }
+            if (ok && !barriers.checkCollision(c)) {
+                portalEntrance.x = px; portalEntrance.y = py; portalEntrance.active = true; portalEntrance.isExit = false;
+                break;
+            }
+        }
+    }
+
+    // If in portal mode, check if reached target length to exit
+    if (inPortalMode) {
+        if ((int)snake.getBody().size() >= portalTargetLength) {
+            inPortalMode = false;
+            portalTargetLength = 0;
+            // schedule next portal
+            nextPortalScore += 30;
+        }
+    }
+
+    // if fruit countdown expired -> game over
+    if (fruitCountdown <= 0.f) {
+        gameOver = true;
+        state = State::GameOver;
+        finalElapsedSeconds = startClock.getElapsedTime().asSeconds() - pausedAccumSeconds;
+        std::cout << "Game Over! Fruit timer reached zero. Score: " << score << std::endl;
+        if (score > highScore) {
+            awaitingNameEntry = true;
+            nameBuffer.clear();
+        } else {
+            awaitingNameEntry = false;
+        }
+        return;
+    }
 }
 
 void GameLogic::draw(sf::RenderWindow& window) {
@@ -273,6 +426,32 @@ void GameLogic::draw(sf::RenderWindow& window) {
             hs.setPosition((float)(gridWidth * blockSize) / 2.f, (float)(gridHeight * blockSize) / 2.f - 48.f);
             window.draw(hs);
         }
+            // Controls panel in bottom-left inside the main area
+            {
+                float left = (float)blockSize * 0.6f;
+                float bottom = (float)(gridHeight * blockSize) - (float)blockSize * 12.0f;
+
+                sf::Text ctrlTitle("Controls:", uiFont, std::max(18, blockSize / 2));
+                ctrlTitle.setFillColor(sf::Color::White);
+                ctrlTitle.setPosition(left, bottom);
+                window.draw(ctrlTitle);
+
+                // Draw W above A S D layout with more spacing
+                sf::Text wText("  W  ", uiFont, std::max(20, blockSize / 2));
+                wText.setFillColor(sf::Color::White);
+                wText.setPosition(left + (float)blockSize * 1.8f, bottom + (float)blockSize * 1.2f);
+                window.draw(wText);
+
+                sf::Text asdText("A S D", uiFont, std::max(20, blockSize / 2));
+                asdText.setFillColor(sf::Color::White);
+                asdText.setPosition(left + (float)blockSize * 1.2f, bottom + (float)blockSize * 2.2f);
+                window.draw(asdText);
+
+                sf::Text pText("P: Pause", uiFont, std::max(16, blockSize / 2));
+                pText.setFillColor(sf::Color::White);
+                pText.setPosition(left, bottom + (float)blockSize * 3.5f);
+                window.draw(pText);
+            }
         // Show Ctrl+R reset hint in lower right corner (larger)
         if (titleFont.getInfo().family.size()) {
             sf::Text hint("Ctrl + R to erase all data", titleFont, std::max(14, blockSize / 2));
@@ -394,7 +573,43 @@ void GameLogic::draw(sf::RenderWindow& window) {
     }
     window.draw(timerText);
 
-    // If paused, draw blinking PAUSE text in center using titleFont
+    // Fruit countdown display (below main timer)
+    int fsecs = (int)std::max(0.f, fruitCountdown);
+    int fm = fsecs / 60;
+    int fs = fsecs % 60;
+    char fbuf[16];
+    snprintf(fbuf, sizeof(fbuf), "%02d:%02d", fm, fs);
+    fruitTimerText.setString(std::string("Fruit: ") + fbuf);
+    // position just below the main timer
+    float ftextW = fruitTimerText.getLocalBounds().width;
+    fruitTimerText.setPosition(winW - ftextW - (float)blockSize * 0.5f, timerText.getPosition().y + timerText.getCharacterSize() + 6.f);
+    {
+        sf::FloatRect fb = fruitTimerText.getLocalBounds();
+        sf::RectangleShape backf({fb.width + 8.f, fb.height + 8.f});
+        backf.setFillColor(sf::Color(0,0,0,140));
+        backf.setPosition(fruitTimerText.getPosition().x - 4.f, fruitTimerText.getPosition().y - 4.f);
+        window.draw(backf);
+    }
+    window.draw(fruitTimerText);
+
+    // Draw countdown (3-2-1-START) if active
+    if (showCountdown) {
+        std::string countdownStr;
+        if (countdownNumber == 0) {
+            countdownStr = "START!";
+        } else {
+            countdownStr = std::to_string(countdownNumber);
+        }
+        countdownText.setString(countdownStr);
+        sf::FloatRect cbounds = countdownText.getLocalBounds();
+        countdownText.setOrigin(cbounds.width / 2.f, cbounds.height / 2.f);
+        float centerX = (float)(gridWidth * blockSize) / 2.f;
+        float centerY = (float)(gridHeight * blockSize) / 2.f;
+        countdownText.setPosition(centerX, centerY);
+        window.draw(countdownText);
+    }
+
+    // If paused, draw blinking PAUSE text in center using titleFont and show resume keys
     if (state == State::Paused) {
         if (titleFont.getInfo().family.size()) {
             float t = pauseClock.getElapsedTime().asSeconds();
@@ -408,6 +623,22 @@ void GameLogic::draw(sf::RenderWindow& window) {
                 ptext.setOrigin(b.width / 2.f, b.height / 2.f);
                 ptext.setPosition((float)(gridWidth * blockSize) / 2.f, (float)(gridHeight * blockSize) / 2.f);
                 window.draw(ptext);
+
+                // Show resume instructions separated on multiple lines with titleFont
+                sf::Text resumeText("Resume: Enter or P", titleFont, std::max(20, blockSize));
+                resumeText.setFillColor(sf::Color::White);
+                sf::FloatRect rb = resumeText.getLocalBounds();
+                resumeText.setOrigin(rb.width / 2.f, rb.height / 2.f);
+                resumeText.setPosition((float)(gridWidth * blockSize) / 2.f, (float)(gridHeight * blockSize) / 2.f + (float)blockSize * 3.5f);
+                window.draw(resumeText);
+
+                // Show exit instruction on separate line below with more space
+                sf::Text menuText("Backspace: Menu", titleFont, std::max(20, blockSize));
+                menuText.setFillColor(sf::Color::White);
+                sf::FloatRect mb = menuText.getLocalBounds();
+                menuText.setOrigin(mb.width / 2.f, mb.height / 2.f);
+                menuText.setPosition((float)(gridWidth * blockSize) / 2.f, (float)(gridHeight * blockSize) / 2.f + (float)blockSize * 4.8f);
+                window.draw(menuText);
             }
         }
     }
@@ -449,63 +680,100 @@ void GameLogic::draw(sf::RenderWindow& window) {
             }
         }
 
-        // Score text in center
-        sf::Text finalScore(scoreText.getString(), uiFont, scoreText.getCharacterSize());
-        finalScore.setString(std::string("Score: ") + std::to_string(score));
-        finalScore.setFillColor(sf::Color::White);
-        sf::FloatRect sb = finalScore.getLocalBounds();
-        finalScore.setOrigin(sb.width / 2.f, sb.height / 2.f);
-        finalScore.setPosition((float)(gridWidth * blockSize) / 2.f, (float)(gridHeight * blockSize) / 2.f - 40.f);
-        window.draw(finalScore);
+        // Animated scoring: base score + time bonus counts up (Mario-style)
+        if (!scoreAnimationDone) {
+            // advance animation at fixed tick
+            float saTick = 0.02f;
+            if (scoreAnimClock.getElapsedTime().asSeconds() >= saTick) {
+                scoreAnimClock.restart();
+                if (timeBonusRemaining > 0) {
+                    // increment animated score by 1 and decrement bonus
+                    animatedScore += 1;
+                    timeBonusRemaining -= 1;
+                } else {
+                    // animation finished
+                    scoreAnimationDone = true;
+                    score = animatedScore; // commit final score
+                    // if record, start name entry
+                    if (score > highScore) {
+                        awaitingNameEntry = true;
+                        nameBuffer.clear();
+                    }
+                }
+            }
 
-        // Time played (frozen at moment of GameOver)
-        int totalSeconds = (int)finalElapsedSeconds;
-        int minutes = totalSeconds / 60;
-        int seconds = totalSeconds % 60;
-        char buf[16];
-        snprintf(buf, sizeof(buf), "%02d:%02d", minutes, seconds);
-        sf::Text finalTime(timerText.getString(), uiFont, timerText.getCharacterSize());
-        finalTime.setString(std::string("Time: ") + buf);
-        finalTime.setFillColor(sf::Color::White);
-        sf::FloatRect tb = finalTime.getLocalBounds();
-        finalTime.setOrigin(tb.width / 2.f, tb.height / 2.f);
-        finalTime.setPosition((float)(gridWidth * blockSize) / 2.f, (float)(gridHeight * blockSize) / 2.f);
-        window.draw(finalTime);
+            // draw animated score and remaining time bonus
+            sf::Text finalScore(std::string("Score: ") + std::to_string(animatedScore), uiFont, scoreText.getCharacterSize());
+            finalScore.setFillColor(sf::Color::White);
+            sf::FloatRect sb = finalScore.getLocalBounds();
+            finalScore.setOrigin(sb.width / 2.f, sb.height / 2.f);
+            finalScore.setPosition((float)(gridWidth * blockSize) / 2.f, (float)(gridHeight * blockSize) / 2.f - 40.f);
+            window.draw(finalScore);
 
-        // High score info (only show if not entering name)
-        if (!awaitingNameEntry) {
-            std::string hsStr = std::string("Best Score: ") + std::to_string(highScore) + std::string(" - \"") + highName + std::string("\"");
-            sf::Text highScoreText(hsStr, uiFont, scoreText.getCharacterSize());
-            highScoreText.setFillColor(sf::Color::Yellow);
-            sf::FloatRect hsb = highScoreText.getLocalBounds();
-            highScoreText.setOrigin(hsb.width / 2.f, hsb.height / 2.f);
-            highScoreText.setPosition((float)(gridWidth * blockSize) / 2.f, (float)(gridHeight * blockSize) / 2.f + 40.f);
-            window.draw(highScoreText);
-        }
-
-        // Restart prompt or name entry if new record
-        if (awaitingNameEntry && titleFont.getInfo().family.size()) {
-            sf::Text prompt("You broke the record! Enter your name:", titleFont, std::max(18, blockSize/1));
-            prompt.setFillColor(sf::Color::White);
-            sf::FloatRect pb = prompt.getLocalBounds();
-            prompt.setOrigin(pb.width / 2.f, pb.height / 2.f);
-            prompt.setPosition((float)(gridWidth * blockSize) / 2.f, (float)(gridHeight * blockSize) / 2.f + 50.f);
-            window.draw(prompt);
-
-            // show current typed name
-            sf::Text nameText(nameBuffer.empty() ? std::string("_") : nameBuffer, titleFont, std::max(18, blockSize/1));
-            nameText.setFillColor(sf::Color::White);
-            sf::FloatRect nb = nameText.getLocalBounds();
-            nameText.setOrigin(nb.width / 2.f, nb.height / 2.f);
-            nameText.setPosition((float)(gridWidth * blockSize) / 2.f, (float)(gridHeight * blockSize) / 2.f + 100.f);
-            window.draw(nameText);
+            sf::Text bonusText(std::string("Time Bonus: ") + std::to_string(timeBonusRemaining) + std::string(" s"), uiFont, timerText.getCharacterSize());
+            bonusText.setFillColor(sf::Color::White);
+            sf::FloatRect bt = bonusText.getLocalBounds();
+            bonusText.setOrigin(bt.width / 2.f, bt.height / 2.f);
+            bonusText.setPosition((float)(gridWidth * blockSize) / 2.f, (float)(gridHeight * blockSize) / 2.f);
+            window.draw(bonusText);
         } else {
-            sf::Text prompt("Press Enter to Restart", uiFont, std::max(18, blockSize));
-            prompt.setFillColor(sf::Color::White);
-            sf::FloatRect pb = prompt.getLocalBounds();
-            prompt.setOrigin(pb.width / 2.f, pb.height / 2.f);
-            prompt.setPosition((float)(gridWidth * blockSize) / 2.f, (float)(gridHeight * blockSize) / 2.f + 80.f);
-            window.draw(prompt);
+            // final static display
+            sf::Text finalScore(std::string("Score: ") + std::to_string(score), uiFont, scoreText.getCharacterSize());
+            finalScore.setFillColor(sf::Color::White);
+            sf::FloatRect sb = finalScore.getLocalBounds();
+            finalScore.setOrigin(sb.width / 2.f, sb.height / 2.f);
+            finalScore.setPosition((float)(gridWidth * blockSize) / 2.f, (float)(gridHeight * blockSize) / 2.f - 40.f);
+            window.draw(finalScore);
+
+            // Time played (frozen at moment of GameOver)
+            int totalSeconds = (int)finalElapsedSeconds;
+            int minutes = totalSeconds / 60;
+            int seconds = totalSeconds % 60;
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%02d:%02d", minutes, seconds);
+            sf::Text finalTime(timerText.getString(), uiFont, timerText.getCharacterSize());
+            finalTime.setString(std::string("Time: ") + buf);
+            finalTime.setFillColor(sf::Color::White);
+            sf::FloatRect tb = finalTime.getLocalBounds();
+            finalTime.setOrigin(tb.width / 2.f, tb.height / 2.f);
+            finalTime.setPosition((float)(gridWidth * blockSize) / 2.f, (float)(gridHeight * blockSize) / 2.f);
+            window.draw(finalTime);
+
+            // High score info (only show if not entering name)
+            if (!awaitingNameEntry) {
+                std::string hsStr = std::string("Best Score: ") + std::to_string(highScore) + std::string(" - \"") + highName + std::string("\"");
+                sf::Text highScoreText(hsStr, uiFont, scoreText.getCharacterSize());
+                highScoreText.setFillColor(sf::Color::Yellow);
+                sf::FloatRect hsb = highScoreText.getLocalBounds();
+                highScoreText.setOrigin(hsb.width / 2.f, hsb.height / 2.f);
+                highScoreText.setPosition((float)(gridWidth * blockSize) / 2.f, (float)(gridHeight * blockSize) / 2.f + 40.f);
+                window.draw(highScoreText);
+            }
+
+            // Restart prompt or name entry if new record
+            if (awaitingNameEntry && titleFont.getInfo().family.size()) {
+                sf::Text prompt("You broke the record! Enter your name:", titleFont, std::max(18, blockSize/1));
+                prompt.setFillColor(sf::Color::White);
+                sf::FloatRect pb = prompt.getLocalBounds();
+                prompt.setOrigin(pb.width / 2.f, pb.height / 2.f);
+                prompt.setPosition((float)(gridWidth * blockSize) / 2.f, (float)(gridHeight * blockSize) / 2.f + 50.f);
+                window.draw(prompt);
+
+                // show current typed name
+                sf::Text nameText(nameBuffer.empty() ? std::string("_") : nameBuffer, titleFont, std::max(18, blockSize/1));
+                nameText.setFillColor(sf::Color::White);
+                sf::FloatRect nb = nameText.getLocalBounds();
+                nameText.setOrigin(nb.width / 2.f, nb.height / 2.f);
+                nameText.setPosition((float)(gridWidth * blockSize) / 2.f, (float)(gridHeight * blockSize) / 2.f + 100.f);
+                window.draw(nameText);
+            } else {
+                sf::Text prompt("Press Enter to Restart", uiFont, std::max(18, blockSize));
+                prompt.setFillColor(sf::Color::White);
+                sf::FloatRect pb = prompt.getLocalBounds();
+                prompt.setOrigin(pb.width / 2.f, pb.height / 2.f);
+                prompt.setPosition((float)(gridWidth * blockSize) / 2.f, (float)(gridHeight * blockSize) / 2.f + 80.f);
+                window.draw(prompt);
+            }
         }
         // Show Ctrl+R reset hint in lower right corner even on game over (larger)
         if (titleFont.getInfo().family.size()) {
@@ -524,7 +792,17 @@ void GameLogic::reset() {
     gameOver = false;
     lastSpawnCheck = 0.f;
     fruits.clear();
+    // generate initial random internal walls (avoid snake start cells)
+    barriers.generateRandom(rng, gridWidth, gridHeight, snake.getBody());
     spawnFood();
+    // reset fruit timer and portals
+    fruitCountdown = 20.f;
+    lastUpdateSeconds = 0.f;
+    portalEntrance.active = false;
+    portalExit.active = false;
+    inPortalMode = false;
+    portalTargetLength = 0;
+    nextPortalScore = 30;
 }
 
 void GameLogic::setSpriteScale(float s) {
@@ -537,10 +815,22 @@ void GameLogic::togglePause() {
         state = State::Paused;
         pauseClock.restart();
     } else if (state == State::Paused) {
-        // Resume
+        // Resume - show countdown again
         pausedAccumSeconds += pauseClock.getElapsedTime().asSeconds();
         state = State::Playing;
+        showCountdown = true;
+        countdownNumber = 3;
+        countdownClock.restart();
     }
+}
+
+void GameLogic::goToMenu() {
+    state = State::Menu;
+    awaitingNameEntry = false;
+    // reset some UI clocks
+    startClock.restart();
+    pausedAccumSeconds = 0.f;
+    showCountdown = false;
 }
 
 void GameLogic::startGame() {
@@ -550,10 +840,24 @@ void GameLogic::startGame() {
     lastSpawnCheck = 0.f;
     snake.reset(gridWidth / 2, gridHeight / 2);
     fruits.clear();
+    // generate initial random internal walls and place food
+    barriers.generateRandom(rng, gridWidth, gridHeight, snake.getBody());
     spawnFood();
     score = 0;
     gameOver = false;
     finalElapsedSeconds = 0.f;
+    fruitCountdown = 20.f;
+    lastUpdateSeconds = 0.f;
+    portalEntrance.active = false;
+    portalExit.active = false;
+    inPortalMode = false;
+    portalTargetLength = 0;
+    nextPortalScore = 30;
+    
+    // Start countdown timer
+    showCountdown = true;
+    countdownNumber = 3;
+    countdownClock.restart();
 }
 
 void GameLogic::toggleTailRotate() {
@@ -561,9 +865,39 @@ void GameLogic::toggleTailRotate() {
 }
 
 void GameLogic::loadFruitTextures() {
-    if (!texGomu.loadFromFile("../assets/images/gomu_gomu.png")) texGomu.loadFromFile("assets/images/gomu_gomu.png");
-    if (!texMera.loadFromFile("../assets/images/mera_mera.png")) texMera.loadFromFile("assets/images/mera_mera.png");
-    if (!texOpe.loadFromFile("../assets/images/ope_ope.png")) texOpe.loadFromFile("assets/images/ope_ope.png");
+    auto findAssetPath = [&](const std::string &p)->std::string {
+        std::ifstream f(p);
+        if (f.good()) { f.close(); return p; }
+        if (p.rfind("../", 0) == 0) {
+            std::string alt = p.substr(3);
+            std::ifstream f2(alt);
+            if (f2.good()) { f2.close(); return alt; }
+        } else {
+            std::string alt = std::string("../") + p;
+            std::ifstream f2(alt);
+            if (f2.good()) { f2.close(); return alt; }
+        }
+        return std::string();
+    };
+
+    std::string p;
+    p = findAssetPath("assets/images/gomu_gomu.png");
+    if (!p.empty()) {
+        if (texGomu.loadFromFile(p)) std::cout << "Loaded texture: " << p << "\n";
+        else std::cerr << "Failed to load texture file (even though found): " << p << "\n";
+    } else std::cerr << "gomu_gomu.png not found in candidates\n";
+
+    p = findAssetPath("assets/images/mera_mera.png");
+    if (!p.empty()) {
+        if (texMera.loadFromFile(p)) std::cout << "Loaded texture: " << p << "\n";
+        else std::cerr << "Failed to load texture file (even though found): " << p << "\n";
+    } else std::cerr << "mera_mera.png not found in candidates\n";
+
+    p = findAssetPath("assets/images/ope_ope.png");
+    if (!p.empty()) {
+        if (texOpe.loadFromFile(p)) std::cout << "Loaded texture: " << p << "\n";
+        else std::cerr << "Failed to load texture file (even though found): " << p << "\n";
+    } else std::cerr << "ope_ope.png not found in candidates\n";
 }
 
 void GameLogic::spawnCheck(float nowSeconds) {
@@ -590,6 +924,7 @@ void GameLogic::spawnCheck(float nowSeconds) {
             for (const auto &of : fruits) {
                 if (of.x == f.x && of.y == f.y) { valid = false; break; }
             }
+                if (barriers.checkCollision({f.x, f.y})) valid = false;
             attempts++;
         }
         if (valid) {
@@ -602,8 +937,11 @@ void GameLogic::spawnCheck(float nowSeconds) {
 
     // Gomu is the persistent single food handled by spawnFood()/eating.
     // Sporadic single-instance fruits: Mera and Ope
-    if (dist01(rng) < pMera) trySpawn(Fruit::Type::Mera, 4.f);
-    if (dist01(rng) < pOpe)  trySpawn(Fruit::Type::Ope, 2.f);
+    // Do not spawn sporadic fruits if score has reached portal threshold (30)
+    if (score < 30) {
+        if (dist01(rng) < pMera) trySpawn(Fruit::Type::Mera, 4.f);
+        if (dist01(rng) < pOpe)  trySpawn(Fruit::Type::Ope, 2.f);
+    }
 }
 
 void GameLogic::removeExpired(float nowSeconds) {
@@ -614,13 +952,22 @@ void GameLogic::removeExpired(float nowSeconds) {
 }
 
 void GameLogic::processEvent(const sf::Event& event) {
+    // Allow some global keys even when not entering name
     if (event.type == sf::Event::KeyPressed) {
-        // Ctrl+R to reset stats (ignore during name entry)
-        if (!awaitingNameEntry && event.key.code == sf::Keyboard::R && event.key.control) {
-            highScore = 0;
-            highName = "Nobody";
-            saveHighScore();
-            return;
+        if (!awaitingNameEntry) {
+            // Ctrl+R to reset stats
+            if (event.key.code == sf::Keyboard::R && event.key.control) {
+                highScore = 0;
+                highName = "Nobody";
+                saveHighScore();
+                return;
+            }
+
+            // Backspace to return to menu when in GameOver or Paused
+            if (event.key.code == sf::Keyboard::BackSpace && (state == State::GameOver || state == State::Paused)) {
+                goToMenu();
+                return;
+            }
         }
     }
 
@@ -638,7 +985,10 @@ void GameLogic::processEvent(const sf::Event& event) {
             // finalize name
             if (!nameBuffer.empty()) {
                 highScore = score;
-                highName = nameBuffer;
+                // store name uppercase
+                std::string up = nameBuffer;
+                for (char &c : up) c = (char)std::toupper((unsigned char)c);
+                highName = up;
                 saveHighScore();
             }
             awaitingNameEntry = false;
@@ -675,8 +1025,11 @@ void GameLogic::loadHighScore() {
 }
 
 void GameLogic::saveHighScore() {
+    // ensure highName is uppercase before saving
+    std::string up = highName;
+    for (char &c : up) c = (char)std::toupper((unsigned char)c);
     std::ofstream out("highscore.txt");
     if (!out) return;
     out << highScore << "\n";
-    out << highName << "\n";
+    out << up << "\n";
 }
