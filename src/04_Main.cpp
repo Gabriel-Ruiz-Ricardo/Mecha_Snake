@@ -57,8 +57,11 @@ int main() {
             if (event.type == sf::Event::Closed) {
                 window.close();
             }
+            // Give game a chance to process events (text input for name entry)
+            game.processEvent(event);
+
             if (event.type == sf::Event::KeyPressed) {
-                if (event.key.code == sf::Keyboard::R) {
+                if (event.key.code == sf::Keyboard::R && game.canRestart()) {
                     game.reset();
                 }
                 if (event.key.code == sf::Keyboard::Escape) {
