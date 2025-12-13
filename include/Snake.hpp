@@ -18,6 +18,7 @@ public:
     Cell getDirection() const { return direction; }
     
     void grow();
+    void growAt(const Cell& pos);
     void reset(int startX, int startY);
     void setBody(const std::vector<Cell>& b);
     void shrinkTo(int len);

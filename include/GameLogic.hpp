@@ -115,9 +115,18 @@ private:
     int nextPortalScore = 30;
     bool portalExitCountdownActive = false;
     float portalExitCountdown = 0.f;
+    // Cuando el portal se activa, mostramos un countdown específico; una vez
+    // finalizado el countdown, se inicia la regrowth (salida de la serpiente).
+    bool portalShowCountdown = false;
+    // Flag que indica que la serpiente está en proceso de salir (regrowth)
+    // durante el cual las colisiones son normales (no inmunidad).
+    bool portalRegrowingActive = false;
+    int portalRegrowPlaced = 0; // Counter for placed regrow steps
+    int portalRegrowNeeded = 0; // Counter for needed regrow steps
     // Regrow while exiting portal
     float portalRegrowAccum = 0.f;
     float portalRegrowInterval = 0.4f; // seconds between auto-grow steps
+    int portalGraceTicks = 0;
     enum class State { Menu, Playing, Paused, GameOver };
     State state = State::Menu;
     float spriteScale = 2.0f;

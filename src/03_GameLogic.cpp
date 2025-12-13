@@ -168,8 +168,8 @@ GameLogic::GameLogic(int gridWidth, int gridHeight, int blockSize)
 }
 
 void GameLogic::handleInput() {
-    // Only process movement input while playing and not in portal countdown
-    if (state == State::Playing && !portalExitCountdownActive) {
+    // Only process movement input while playing and not during any countdown
+    if (state == State::Playing && !showCountdown) {
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::Up) || sf::Keyboard::isKeyPressed(sf::Keyboard::W)) {
             snake.changeDirection(0, -1);
         }
@@ -200,22 +200,36 @@ void GameLogic::update() {
     if (state == State::Menu) return;
     if (state == State::Paused) return;
 
-    // Handle countdown display (3-2-1-START)
+    // Handle countdown display (3-2-1-START) and portal-specific (2-1-START)
     if (showCountdown) {
         float countdownElapsed = countdownClock.getElapsedTime().asSeconds();
-        if (countdownElapsed >= 4.0f) {
-            // Countdown finished, hide it and ensure the countdown time is NOT
-            // counted as play time by adding it to pausedAccumSeconds.
-            pausedAccumSeconds += countdownClock.getElapsedTime().asSeconds();
-            showCountdown = false;
-        } else if (countdownElapsed >= 3.0f) {
-            countdownNumber = 0; // "START"
-        } else if (countdownElapsed >= 2.0f) {
-            countdownNumber = 1;
-        } else if (countdownElapsed >= 1.0f) {
-            countdownNumber = 2;
+        if (portalShowCountdown) {
+            // Portal countdown: 2,1,START over 3 seconds
+            if (countdownElapsed >= 3.0f) {
+                pausedAccumSeconds += countdownClock.getElapsedTime().asSeconds();
+                showCountdown = false;
+                portalShowCountdown = false;
+            } else if (countdownElapsed >= 2.0f) {
+                countdownNumber = 0; // "START"
+            } else if (countdownElapsed >= 1.0f) {
+                countdownNumber = 1;
+            } else {
+                countdownNumber = 2;
+            }
         } else {
-            countdownNumber = 3;
+            // Default start-game countdown: 3,2,1,START over 4 seconds
+            if (countdownElapsed >= 4.0f) {
+                pausedAccumSeconds += countdownClock.getElapsedTime().asSeconds();
+                showCountdown = false;
+            } else if (countdownElapsed >= 3.0f) {
+                countdownNumber = 0; // "START"
+            } else if (countdownElapsed >= 2.0f) {
+                countdownNumber = 1;
+            } else if (countdownElapsed >= 1.0f) {
+                countdownNumber = 2;
+            } else {
+                countdownNumber = 3;
+            }
         }
         // Don't update game while countdown is showing
         return;
@@ -235,23 +249,21 @@ void GameLogic::update() {
     // reduce fruit countdown
     fruitCountdown -= delta;
 
-    // Handle portal exit countdown AND regrow during countdown
-    if (portalExitCountdownActive) {
-        portalExitCountdown -= delta;
-        // Regrow while countdown is active (snake forming as it exits)
-        if ((int)snake.getBody().size() < portalTargetLength) {
+    // Regrow while portal regrowing is active (snake is exiting and regains length)
+    // Use `snake.grow()` per interval so the body emerges naturally as the head
+    // advances (calling grow before update prevents tail removal on that tick).
+    if (portalRegrowingActive) {
+        if (portalRegrowPlaced < portalRegrowNeeded) {
             portalRegrowAccum += delta;
             if (portalRegrowAccum >= portalRegrowInterval) {
                 portalRegrowAccum -= portalRegrowInterval;
                 snake.grow();
+                portalRegrowPlaced++;
             }
+        } else {
+            // Finished regrowth
+            portalRegrowingActive = false;
         }
-        if (portalExitCountdown <= 0.f) {
-            portalExitCountdownActive = false;
-            // No inmunidad: la serpiente ya puede morir desde que sale
-        }
-        // Permitir movimiento y colisión desde el primer frame tras salir
-        // (no return aquí)
     }
 
     snake.update();
@@ -311,47 +323,81 @@ void GameLogic::update() {
         // Regenerar barreras evitando el área segura
         barriers.generateRandom(rng, gridWidth, gridHeight, safeArea);
 
-        // Colocar la serpiente completa saliendo hacia arriba
+        // Colocar la serpiente: la cabeza asoma 1 bloque arriba del portal (ey-1)
+        // y el resto del cuerpo queda dentro del portal (ey, ey+1, ...).
         std::vector<Cell> nb;
-        for (int i = 0; i < oldLen; ++i) nb.push_back({ex, ey - i});
+        nb.push_back({ex, ey - 1});
+        for (int i = 1; i < oldLen; ++i) nb.push_back({ex, ey - 1 + i});
         snake.setBody(nb);
         snake.changeDirection(0, -1);
+        std::cout << "[DEBUG] Teleported to exit (" << ex << "," << ey << ") oldLen=" << oldLen << " body:";
+        for (const auto &c : snake.getBody()) std::cout << " (" << c.x << "," << c.y << ")";
+        std::cout << std::endl;
         portalExit.x = ex; portalExit.y = ey; portalExit.active = true; portalExit.isExit = true;
         portalTargetLength = oldLen;
         portalRegrowAccum = 0.f;
-        portalExitCountdownActive = true;
-        portalExitCountdown = 1.0f; // Solo 1 segundo de pausa visual
+        portalRegrowingActive = false;
+        portalRegrowPlaced = 0;
+        portalRegrowNeeded = 0;
+        // Mostrar contador para el cambio de mapa (2,1,START)
+        showCountdown = true;
+        portalShowCountdown = true;
+        countdownClock.restart();
         fruits.clear();
         lastSpawnCheck = elapsedPlaySeconds;
         spawnFood();
+        // short grace ticks to avoid immediate collision in next updates
+        portalGraceTicks = 3;
     }
     
-    // Comprobar colisión con barreras (sin inmunidad tras portal)
-    if (barriers.checkCollision(head)) {
-        gameOver = true;
-        state = State::GameOver;
-        finalElapsedSeconds = startClock.getElapsedTime().asSeconds() - pausedAccumSeconds;
-        baseScoreOnGameOver = score;
-        timeBonusRemaining = (int)finalElapsedSeconds;
-        animatedScore = baseScoreOnGameOver;
-        scoreAnimationDone = false;
-        scoreAnimClock.restart();
-        awaitingNameEntry = false;
-        return;
-    }
+    // Si hubo teletransporte, actualizar posición de cabeza antes de comprobar colisiones
+    head = snake.getHead();
 
-    // Comprobar colisión consigo misma (sin inmunidad tras portal)
-    if (snake.checkSelfCollision()) {
-        gameOver = true;
-        state = State::GameOver;
-        finalElapsedSeconds = startClock.getElapsedTime().asSeconds() - pausedAccumSeconds;
-        baseScoreOnGameOver = score;
-        timeBonusRemaining = (int)finalElapsedSeconds;
-        animatedScore = baseScoreOnGameOver;
-        scoreAnimationDone = false;
-        scoreAnimClock.restart();
-        awaitingNameEntry = false;
-        return;
+    // decrement grace ticks (if any)
+    if (portalGraceTicks > 0) portalGraceTicks--;
+
+    // Si estamos mostrando el conteo del portal, no comprobamos colisiones aún.
+    // Una vez acabe el conteo, `portalRegrowingActive` se activa y las colisiones
+    // funcionan normalmente mientras la serpiente regresa.
+    if (!portalShowCountdown && portalGraceTicks <= 0) {
+        // Comprobar colisión con barreras
+        if (barriers.checkCollision(head)) {
+            std::cout << "[DEBUG] Collision with barrier at head (" << head.x << "," << head.y << ")" << std::endl;
+            gameOver = true;
+            state = State::GameOver;
+            finalElapsedSeconds = startClock.getElapsedTime().asSeconds() - pausedAccumSeconds;
+            baseScoreOnGameOver = score;
+            timeBonusRemaining = (int)finalElapsedSeconds;
+            animatedScore = baseScoreOnGameOver;
+            scoreAnimationDone = false;
+            scoreAnimClock.restart();
+            awaitingNameEntry = false;
+            return;
+        }
+
+        // Comprobar colisión consigo misma
+        // Si la serpiente aún tiene segmentos dentro del portal de salida,
+        // ignorar la autocolisión hasta que haya emergido por completo.
+        bool hasSegmentInsidePortal = false;
+        if (portalExit.active) {
+            for (const auto &c : snake.getBody()) {
+                if (c.y >= portalExit.y) { hasSegmentInsidePortal = true; break; }
+            }
+        }
+        bool skipSelf = portalShowCountdown || portalGraceTicks > 0 || hasSegmentInsidePortal;
+        if (!skipSelf && snake.checkSelfCollision()) {
+            std::cout << "[DEBUG] Self collision detected. Head: (" << head.x << "," << head.y << ")" << std::endl;
+            gameOver = true;
+            state = State::GameOver;
+            finalElapsedSeconds = startClock.getElapsedTime().asSeconds() - pausedAccumSeconds;
+            baseScoreOnGameOver = score;
+            timeBonusRemaining = (int)finalElapsedSeconds;
+            animatedScore = baseScoreOnGameOver;
+            scoreAnimationDone = false;
+            scoreAnimClock.restart();
+            awaitingNameEntry = false;
+            return;
+        }
     }
     
     // Check fruits eaten
@@ -401,7 +447,9 @@ void GameLogic::update() {
     removeExpired(now);
 
     // PORTAL: spawn entrance portal when score reaches a multiple of 30
-    if (score >= nextPortalScore && !portalEntrance.active) {
+    // Only spawn if there is no existing entrance or exit, and no portal countdown
+    // or regrowth in progress. This ensures only one portal exists per map change.
+    if (score >= nextPortalScore && !portalEntrance.active && !portalExit.active && !portalShowCountdown && !portalRegrowingActive) {
         // Clear all existing fruits when portal appears
         fruits.clear();
         // place entrance at random free cell
@@ -420,11 +468,17 @@ void GameLogic::update() {
         }
     }
 
-    // Si la serpiente ya alcanzó su tamaño original tras el portal, quitar el portal de salida
-    if (!portalExitCountdownActive && portalExit.active) {
-        if ((int)snake.getBody().size() >= portalTargetLength) {
+    // Si la serpiente ya salió completamente del portal (ningún segmento
+    // está en o debajo de la y de salida), quitar el portal de salida
+    if (portalExit.active) {
+        bool anyInside = false;
+        for (const auto &c : snake.getBody()) {
+            if (c.y >= portalExit.y) { anyInside = true; break; }
+        }
+        if (!anyInside) {
             portalExit.active = false;
             portalTargetLength = 0;
+            portalRegrowingActive = false;
             nextPortalScore += 30;
         }
     }
@@ -617,7 +671,11 @@ void GameLogic::draw(sf::RenderWindow& window) {
     if (renderer.isLoaded() && !bodyCells.empty()) {
         // Draw body segments and tail first, then draw head over them
         for (size_t i = 1; i < bodyCells.size(); ++i) {
-                if (i == bodyCells.size() - 1) {
+            // If there's an active exit portal, hide any body segments that are
+            // still inside it (y >= portalExit.y) so they aren't rendered
+            // until they emerge above the portal.
+            if (portalExit.active && bodyCells[i].y >= portalExit.y) continue;
+            if (i == bodyCells.size() - 1) {
                 // tail: orientation determined by vector from tail to previous cell
                 const Cell& prev = bodyCells[i - 1];
                 const Cell& curr = bodyCells[i];
@@ -695,14 +753,24 @@ void GameLogic::draw(sf::RenderWindow& window) {
             drawPortalSprite(portalEntrance.x, portalEntrance.y, false);
         }
         if (portalExit.active) {
-            drawPortalSprite(portalExit.x, portalExit.y, portalExitCountdownActive);
+            drawPortalSprite(portalExit.x, portalExit.y, portalShowCountdown);
         }
     // Al final del archivo, agregar la textura de portal como miembro
 
     // --- Agregar miembro de textura de portal ---
     } else {
         // Fallback: dibujar rectángulos sólidos
-        snake.draw(window, blockSize);
+        if (showCountdown && portalShowCountdown) {
+            // During portal countdown show only the head so the body can emerge
+            // from the portal tile when movement resumes.
+            Cell h = snake.getHead();
+            sf::RectangleShape rect({(float)blockSize, (float)blockSize});
+            rect.setFillColor(sf::Color::Green);
+            rect.setPosition((float)(h.x * blockSize), (float)(h.y * blockSize));
+            window.draw(rect);
+        } else {
+            snake.draw(window, blockSize);
+        }
         for (const auto &f : fruits) {
             float sizeInPixels = (float)blockSize * renderer.getSpriteScale();
             sf::RectangleShape fs({sizeInPixels, sizeInPixels});
@@ -788,31 +856,7 @@ void GameLogic::draw(sf::RenderWindow& window) {
         window.draw(countdownText);
     }
 
-    // Draw portal exit countdown (2-1-START)
-    if (portalExitCountdownActive && portalExit.active) {
-        int countNum = (int)std::ceil(portalExitCountdown);
-        if (countNum > 3) countNum = 3;
-        if (countNum < 0) countNum = 0;
-        
-        std::string countdownStr;
-        if (countNum == 0) {
-            countdownStr = "START!";
-        } else {
-            countdownStr = std::to_string(countNum - 1); // 2, 1 instead of 3, 2, 1
-        }
-        
-        sf::Text portalCountdownText(countdownStr, uiFont, std::max(60, (int)(blockSize * 3.0f)));
-        portalCountdownText.setFillColor(sf::Color::Magenta);
-        portalCountdownText.setOutlineColor(sf::Color::Black);
-        portalCountdownText.setOutlineThickness(3.f);
-        portalCountdownText.setStyle(sf::Text::Bold);
-        sf::FloatRect pcbounds = portalCountdownText.getLocalBounds();
-        portalCountdownText.setOrigin(pcbounds.width / 2.f, pcbounds.height / 2.f);
-        float centerX = (float)(gridWidth * blockSize) / 2.f;
-        float centerY = (float)(gridHeight * blockSize) / 2.f;
-        portalCountdownText.setPosition(centerX, centerY);
-        window.draw(portalCountdownText);
-    }
+    // Portal countdown is rendered by the central `showCountdown` block.
 
     // If paused, draw blinking PAUSE text in center using titleFont and show resume keys
     if (state == State::Paused) {
@@ -1016,6 +1060,9 @@ void GameLogic::reset() {
     nextPortalScore = 30;
     portalExitCountdownActive = false;
     portalExitCountdown = 0.f;
+    portalShowCountdown = false;
+    portalRegrowingActive = false;
+    portalRegrowPlaced = 0;
 }
 
 void GameLogic::setSpriteScale(float s) {
@@ -1068,6 +1115,9 @@ void GameLogic::startGame() {
     nextPortalScore = 30;
     portalExitCountdownActive = false;
     portalExitCountdown = 0.f;
+    portalShowCountdown = false;
+    portalRegrowingActive = false;
+    portalRegrowPlaced = 0;
     
     // Start countdown timer
     showCountdown = true;
@@ -1184,8 +1234,8 @@ void GameLogic::spawnCheck(float nowSeconds) {
 
     // Gomu is the persistent single food handled by spawnFood()/eating.
     // Sporadic single-instance fruits: Mera and Ope
-    // Do not spawn sporadic fruits if portal entrance is active
-    if (!portalEntrance.active && !portalExitCountdownActive) {
+    // Do not spawn sporadic fruits if a portal is active or a portal countdown/show is active
+    if (!portalEntrance.active && !portalExit.active && !showCountdown) {
         if (dist01(rng) < pMera) trySpawn(Fruit::Type::Mera, 4.f);
         if (dist01(rng) < pOpe)  trySpawn(Fruit::Type::Ope, 2.f);
     }

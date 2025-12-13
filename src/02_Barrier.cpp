@@ -121,8 +121,8 @@ void Barrier::generateRandom(std::mt19937 &rng, int gridWidth, int gridHeight, c
         auto occLocal = occ;
         std::vector<Cell> newWalls;
 
-        // === Generate more lines and pillars, more dispersos ===
-        int numLines = std::uniform_int_distribution<int>(4, 7)(rng); // Más líneas
+        // === Generate fewer lines and pillars (reduce density) ===
+        int numLines = std::uniform_int_distribution<int>(2, 4)(rng); // menos líneas
         for (int l = 0; l < numLines; ++l) {
             int dir = std::uniform_int_distribution<int>(0, 2)(rng); // 0=horizontal, 1=vertical, 2=diagonal
 
@@ -231,8 +231,8 @@ void Barrier::generateRandom(std::mt19937 &rng, int gridWidth, int gridHeight, c
             }
         }
 
-        // === Add scattered single pillars (más y dispersos) ===
-        int numPillars = std::uniform_int_distribution<int>(4, 8)(rng); // Más pilares
+        // === Add scattered single pillars (menos y más dispersos) ===
+        int numPillars = std::uniform_int_distribution<int>(1, 3)(rng); // menos pilares
         for (int p = 0; p < numPillars; ++p) {
             int px = std::uniform_int_distribution<int>(minXg, maxXg)(rng);
             int py = std::uniform_int_distribution<int>(minYg, maxYg)(rng);
@@ -242,7 +242,7 @@ void Barrier::generateRandom(std::mt19937 &rng, int gridWidth, int gridHeight, c
             }
         }
 
-        // Test connectivity: need at least 75% reachable (más difícil)
+        // Test connectivity: accept lower connectivity to allow sparser maps
         int sx = (minXg + maxXg) / 2;
         int sy = (minYg + maxYg) / 2;
         int reachable = connectivity(sx, sy);
@@ -251,7 +251,8 @@ void Barrier::generateRandom(std::mt19937 &rng, int gridWidth, int gridHeight, c
             bestWalls = walls;
             for (auto &cw : newWalls) bestWalls.push_back(cw);
         }
-        if (reachable >= gridCells * 0.75) {
+        // Lower threshold: require ~55% reachable space instead of 75%
+        if (reachable >= gridCells * 0.55) {
             for (auto &cw : newWalls) walls.push_back(cw);
             return;
         }

@@ -61,6 +61,10 @@ void Snake::grow() {
     body.push_back(tail);
 }
 
+void Snake::growAt(const Cell& pos) {
+    body.push_back(pos);
+}
+
 void Snake::setBody(const std::vector<Cell>& b) {
     body = b;
 }
