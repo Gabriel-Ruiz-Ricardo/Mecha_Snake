@@ -22,6 +22,7 @@ struct Fruit {
 };
 
 class GameLogic {
+    sf::Texture portalTexture;
 public:
     GameLogic(int gridWidth, int gridHeight, int blockSize);
     
@@ -109,9 +110,11 @@ private:
     struct Portal { int x; int y; bool active = false; bool isExit = false; };
     Portal portalEntrance;
     Portal portalExit;
-    bool inPortalMode = false; // invulnerable until regrow
+    // bool inPortalMode = false; // eliminado: ya no hay inmunidad tras portal
     int portalTargetLength = 0;
-    int nextPortalScore = 250;
+    int nextPortalScore = 30;
+    bool portalExitCountdownActive = false;
+    float portalExitCountdown = 0.f;
     // Regrow while exiting portal
     float portalRegrowAccum = 0.f;
     float portalRegrowInterval = 0.4f; // seconds between auto-grow steps

@@ -121,33 +121,27 @@ void Barrier::generateRandom(std::mt19937 &rng, int gridWidth, int gridHeight, c
         auto occLocal = occ;
         std::vector<Cell> newWalls;
 
-        // === Generate long horizontal/vertical/diagonal lines with guaranteed gaps ===
-        int numLines = std::uniform_int_distribution<int>(2, 4)(rng);
+        // === Generate more lines and pillars, more dispersos ===
+        int numLines = std::uniform_int_distribution<int>(4, 7)(rng); // Más líneas
         for (int l = 0; l < numLines; ++l) {
             int dir = std::uniform_int_distribution<int>(0, 2)(rng); // 0=horizontal, 1=vertical, 2=diagonal
-            
+
             if (dir == 0) {
-                // Horizontal line - can be anywhere vertically, not just edges
+                // Horizontal line
                 int y = std::uniform_int_distribution<int>(minYg, maxYg)(rng);
                 int xStart = minXg;
                 int xEnd = maxXg;
                 int lineLength = xEnd - xStart + 1;
-                
-                // Calculate minimum gaps based on line length
-                // For longer lines, need more gaps to guarantee passage
-                int minGaps = std::max(2, lineLength / 10); // At least 1 gap per 10 cells
-                int numGaps = std::uniform_int_distribution<int>(minGaps, minGaps + 1)(rng);
-                
+                int minGaps = std::max(5, lineLength / 4); // Más huecos
+                int numGaps = std::uniform_int_distribution<int>(minGaps, minGaps + 3)(rng);
                 std::vector<int> gapPos;
                 for (int g = 0; g < numGaps; ++g) {
                     gapPos.push_back(std::uniform_int_distribution<int>(xStart, xEnd)(rng));
                 }
-                
                 for (int x = xStart; x <= xEnd; ++x) {
                     bool isGap = false;
                     for (int gx : gapPos) if (x == gx) { isGap = true; break; }
                     if (!isGap && !occLocal[x][y]) {
-                        // Check for minimum 2-cell spacing from other walls vertically
                         bool canPlace = true;
                         for (int dy = -2; dy <= 2; ++dy) {
                             if (dy == 0) continue;
@@ -158,32 +152,31 @@ void Barrier::generateRandom(std::mt19937 &rng, int gridWidth, int gridHeight, c
                             }
                         }
                         if (canPlace) {
+                            if (x > minXg && occLocal[x-1][y]) canPlace = false;
+                            if (x < maxXg && occLocal[x+1][y]) canPlace = false;
+                        }
+                        if (canPlace) {
                             occLocal[x][y] = true;
                             newWalls.push_back({x, y});
                         }
                     }
                 }
             } else if (dir == 1) {
-                // Vertical line - can be anywhere horizontally
+                // Vertical line
                 int x = std::uniform_int_distribution<int>(minXg, maxXg)(rng);
                 int yStart = minYg;
                 int yEnd = maxYg;
                 int lineLength = yEnd - yStart + 1;
-                
-                // Calculate minimum gaps based on line length
-                int minGaps = std::max(2, lineLength / 10);
-                int numGaps = std::uniform_int_distribution<int>(minGaps, minGaps + 1)(rng);
-                
+                int minGaps = std::max(5, lineLength / 4);
+                int numGaps = std::uniform_int_distribution<int>(minGaps, minGaps + 3)(rng);
                 std::vector<int> gapPos;
                 for (int g = 0; g < numGaps; ++g) {
                     gapPos.push_back(std::uniform_int_distribution<int>(yStart, yEnd)(rng));
                 }
-                
                 for (int y = yStart; y <= yEnd; ++y) {
                     bool isGap = false;
                     for (int gy : gapPos) if (y == gy) { isGap = true; break; }
                     if (!isGap && !occLocal[x][y]) {
-                        // Check for minimum 2-cell spacing from other walls horizontally
                         bool canPlace = true;
                         for (int dx = -2; dx <= 2; ++dx) {
                             if (dx == 0) continue;
@@ -192,6 +185,10 @@ void Barrier::generateRandom(std::mt19937 &rng, int gridWidth, int gridHeight, c
                                 canPlace = false;
                                 break;
                             }
+                        }
+                        if (canPlace) {
+                            if (y > minYg && occLocal[x][y-1]) canPlace = false;
+                            if (y < maxYg && occLocal[x][y+1]) canPlace = false;
                         }
                         if (canPlace) {
                             occLocal[x][y] = true;
@@ -204,35 +201,25 @@ void Barrier::generateRandom(std::mt19937 &rng, int gridWidth, int gridHeight, c
                 int startX = std::uniform_int_distribution<int>(minXg, maxXg)(rng);
                 int startY = std::uniform_int_distribution<int>(minYg, maxYg)(rng);
                 int diagDir = std::uniform_int_distribution<int>(0, 3)(rng); // 0=NE, 1=NW, 2=SE, 3=SW
-                
-                // Generate diagonal with gaps
                 std::vector<Cell> diagCells;
                 int x = startX, y = startY;
                 int dx = 0, dy = 0;
-                
-                // Set direction vectors
-                if (diagDir == 0) { dx = 1; dy = -1; } // NE
-                else if (diagDir == 1) { dx = -1; dy = -1; } // NW
-                else if (diagDir == 2) { dx = 1; dy = 1; } // SE
-                else { dx = -1; dy = 1; } // SW
-                
-                // Collect diagonal cells
+                if (diagDir == 0) { dx = 1; dy = -1; }
+                else if (diagDir == 1) { dx = -1; dy = -1; }
+                else if (diagDir == 2) { dx = 1; dy = 1; }
+                else { dx = -1; dy = 1; }
                 while (x >= minXg && x <= maxXg && y >= minYg && y <= maxYg) {
                     diagCells.push_back({x, y});
                     x += dx;
                     y += dy;
                 }
-                
-                // Add gaps to diagonal
                 int diagLength = (int)diagCells.size();
-                int minGaps = std::max(1, diagLength / 8); // Fewer gaps for diagonals
-                int numGaps = std::uniform_int_distribution<int>(minGaps, minGaps + 1)(rng);
-                
+                int minGaps = std::max(3, diagLength / 4);
+                int numGaps = std::uniform_int_distribution<int>(minGaps, minGaps + 2)(rng);
                 std::vector<int> gapIndices;
                 for (int g = 0; g < numGaps && diagLength > 0; ++g) {
                     gapIndices.push_back(std::uniform_int_distribution<int>(0, diagLength - 1)(rng));
                 }
-                
                 for (int i = 0; i < (int)diagCells.size(); ++i) {
                     bool isGap = false;
                     for (int gi : gapIndices) if (i == gi) { isGap = true; break; }
@@ -244,20 +231,18 @@ void Barrier::generateRandom(std::mt19937 &rng, int gridWidth, int gridHeight, c
             }
         }
 
-        // === Add scattered single pillars (very sparse) ===
-        int numPillars = std::uniform_int_distribution<int>(2, 5)(rng);
+        // === Add scattered single pillars (más y dispersos) ===
+        int numPillars = std::uniform_int_distribution<int>(4, 8)(rng); // Más pilares
         for (int p = 0; p < numPillars; ++p) {
             int px = std::uniform_int_distribution<int>(minXg, maxXg)(rng);
             int py = std::uniform_int_distribution<int>(minYg, maxYg)(rng);
-            // Only single cell pillars (no 2x2)
             if (px >= minXg && px <= maxXg && py >= minYg && py <= maxYg && !occLocal[px][py]) {
                 occLocal[px][py] = true;
                 newWalls.push_back({px, py});
             }
         }
 
-
-        // Test connectivity: need at least 70% reachable (very low density, maximum playability)
+        // Test connectivity: need at least 75% reachable (más difícil)
         int sx = (minXg + maxXg) / 2;
         int sy = (minYg + maxYg) / 2;
         int reachable = connectivity(sx, sy);
@@ -266,7 +251,7 @@ void Barrier::generateRandom(std::mt19937 &rng, int gridWidth, int gridHeight, c
             bestWalls = walls;
             for (auto &cw : newWalls) bestWalls.push_back(cw);
         }
-        if (reachable >= gridCells * 0.7) {
+        if (reachable >= gridCells * 0.75) {
             for (auto &cw : newWalls) walls.push_back(cw);
             return;
         }

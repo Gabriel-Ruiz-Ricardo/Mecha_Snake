@@ -35,13 +35,26 @@ int main() {
     sf::RenderWindow window(sf::VideoMode(windowWidth, windowHeight), "Snake - Classic", sf::Style::Default);
     window.setFramerateLimit(60);
     std::cout << "Window: " << windowWidth << "x" << windowHeight << ", blockSize: " << usedBlockSize << std::endl;
-    
+
+    // Cargar imagen de fondo
+    sf::Texture backgroundTexture;
+    if (!backgroundTexture.loadFromFile("assets/images/fondo.png")) {
+        std::cerr << "No se pudo cargar assets/images/fondo.png, se usará color sólido\n";
+    }
+    sf::Sprite backgroundSprite;
+    if (backgroundTexture.getSize().x > 0 && backgroundTexture.getSize().y > 0) {
+        backgroundSprite.setTexture(backgroundTexture);
+        float scaleX = (float)windowWidth / backgroundTexture.getSize().x;
+        float scaleY = (float)windowHeight / backgroundTexture.getSize().y;
+        backgroundSprite.setScale(scaleX, scaleY);
+    }
+
     GameLogic game(BLOCKS, BLOCKS, usedBlockSize);
-    
+
     sf::Clock clock;
     float moveTimer = 0.0f;
     const float MOVE_INTERVAL = 0.08f; // Tiempo entre movimientos
-    
+
     std::cout << "=== SNAKE GAME ===" << std::endl;
     std::cout << "Controls: Arrow keys or W A S D to move" << std::endl;
     std::cout << "Press R to reset after Game Over" << std::endl;
@@ -50,7 +63,7 @@ int main() {
     std::cout << "Avoid white walls and don't hit yourself" << std::endl;
     std::cout << "Press [ / ] to change sprite scale" << std::endl;
     std::cout << "==================" << std::endl;
-    
+
     while (window.isOpen()) {
         sf::Event event;
         while (window.pollEvent(event)) {
@@ -86,24 +99,28 @@ int main() {
                 }
             }
         }
-        
+
         // Manejo de entrada continuo
         game.handleInput();
-        
+
         // Actualizar lógica del juego
         sf::Time elapsed = clock.restart();
         moveTimer += elapsed.asSeconds();
-        
+
         if (moveTimer >= MOVE_INTERVAL) {
             moveTimer = 0.0f;
             game.update();
         }
-        
-        // Renderizar - use grass green background color (#132f03)
-        window.clear(sf::Color(19, 47, 3));
+
+        // Renderizar fondo
+        if (backgroundTexture.getSize().x > 0 && backgroundTexture.getSize().y > 0) {
+            window.draw(backgroundSprite);
+        } else {
+            window.clear(sf::Color(34, 139, 34));
+        }
         game.draw(window);
         window.display();
     }
-    
+
     return 0;
 }

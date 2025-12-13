@@ -7,29 +7,58 @@
 #include <vector>
 #include <fstream>
 #include <sstream>
+#include <random>
+
+// ... rest of the file ...
+
+void GameLogic::spawnFood() {
+    // Do not spawn fruits if portal entrance is active
+    if (portalEntrance.active) return;
+
+    // Spawn a common Gomu fruit at a valid position
+    std::uniform_int_distribution<int> distX(barriers.getMinX() + 1, barriers.getMaxX() - 1);
+    std::uniform_int_distribution<int> distY(barriers.getMinY() + 1, barriers.getMaxY() - 1);
+
+    Fruit f;
+    bool valid = false;
+    int attempts = 0;
+    while (!valid && attempts < 100) {
+        f.x = distX(rng);
+        f.y = distY(rng);
+        valid = true;
+        for (const auto &cell : snake.getBody()) {
+            if (cell.x == f.x && cell.y == f.y) { valid = false; break; }
+        }
+        for (const auto &of : fruits) {
+            if (of.x == f.x && of.y == f.y) { valid = false; break; }
+        }
+        if (barriers.checkCollision({f.x, f.y})) valid = false;
+        attempts++;
+    }
+    if (!valid) return;
+    f.type = Fruit::Type::Gomu;
+    f.spawnTime = startClock.getElapsedTime().asSeconds() - pausedAccumSeconds;
+    f.duration = 0.f;
+    fruits.push_back(f);
+}
+#include "GameLogic.hpp"
+#include <iostream>
+#include <ctime>
+#include <algorithm>
+#include <cstdio>
+#include <cmath>
+#include <vector>
+#include <fstream>
+#include <sstream>
 #include <fstream>
 
 GameLogic::GameLogic(int gridWidth, int gridHeight, int blockSize)
     : gridWidth(gridWidth), gridHeight(gridHeight), blockSize(blockSize),
       snake(gridWidth/2, gridHeight/2, sf::Color::Green),
       barriers(2, 2, gridWidth-3, gridHeight-3),
-      score(0), gameOver(false) {
-    rng.seed((unsigned)time(nullptr));
-
-    // Load weedle sprites (head, body_1-4, tail)
-    if (renderer.loadSprites()) {
-        std::cout << "Weedle sprites loaded successfully\n";
-    } else {
-        std::cout << "Failed to load some weedle sprites\n";
-    }
-
-    // Set sprite scale for renderer
-    renderer.setSpriteScale(spriteScale);
-
-    // Load wall texture for barriers
-    barriers.loadTexture("assets/images/muro.jpeg");
-
-    // Load UI font (robust search across candidate paths)
+      score(0), gameOver(false)
+{
+    // Definir lambda para buscar archivos en assets
     auto findAssetPath = [&](const std::string &p)->std::string {
         std::ifstream f(p);
         if (f.good()) { f.close(); return p; }
@@ -44,6 +73,32 @@ GameLogic::GameLogic(int gridWidth, int gridHeight, int blockSize)
         }
         return std::string();
     };
+
+    // Cargar textura de portal
+    std::string portalPath = findAssetPath("assets/images/portal.png");
+    if (!portalPath.empty()) {
+        if (portalTexture.loadFromFile(portalPath)) {
+            std::cout << "Loaded portal texture: " << portalPath << "\n";
+        } else {
+            std::cerr << "Failed to load portal texture from: " << portalPath << "\n";
+        }
+    } else {
+        std::cerr << "portal.png not found in candidates\n";
+    }
+    rng.seed((unsigned)time(nullptr));
+
+    // Load weedle sprites (head, body_1-4, tail)
+    if (renderer.loadSprites()) {
+        std::cout << "Weedle sprites loaded successfully\n";
+    } else {
+        std::cout << "Failed to load some weedle sprites\n";
+    }
+
+    // Set sprite scale for renderer
+    renderer.setSpriteScale(spriteScale);
+
+    // Load wall texture for barriers
+    barriers.loadTexture("assets/images/muro.jpeg");
 
     std::string fontPath = findAssetPath("assets/fonts/Minecraft.ttf");
     if (fontPath.empty()) fontPath = findAssetPath("assets/fonts/HOMOARAK.TTF");
@@ -112,40 +167,9 @@ GameLogic::GameLogic(int gridWidth, int gridHeight, int blockSize)
     lastUpdateSeconds = 0.f;
 }
 
-void GameLogic::spawnFood() {
-    // Do not spawn fruits once score threshold reached for portal sequence
-    if (score >= 30) return;
-
-    // Spawn a common Gomu fruit at a valid position
-    std::uniform_int_distribution<int> distX(barriers.getMinX() + 1, barriers.getMaxX() - 1);
-    std::uniform_int_distribution<int> distY(barriers.getMinY() + 1, barriers.getMaxY() - 1);
-
-    Fruit f;
-    bool valid = false;
-    int attempts = 0;
-    while (!valid && attempts < 100) {
-        f.x = distX(rng);
-        f.y = distY(rng);
-        valid = true;
-        for (const auto &cell : snake.getBody()) {
-            if (cell.x == f.x && cell.y == f.y) { valid = false; break; }
-        }
-        for (const auto &of : fruits) {
-            if (of.x == f.x && of.y == f.y) { valid = false; break; }
-        }
-            if (barriers.checkCollision({f.x, f.y})) valid = false;
-        attempts++;
-    }
-    if (!valid) return;
-    f.type = Fruit::Type::Gomu;
-    f.spawnTime = startClock.getElapsedTime().asSeconds() - pausedAccumSeconds;
-    f.duration = 0.f;
-    fruits.push_back(f);
-}
-
 void GameLogic::handleInput() {
-    // Only process movement input while playing
-    if (state == State::Playing) {
+    // Only process movement input while playing and not in portal countdown
+    if (state == State::Playing && !portalExitCountdownActive) {
         if (sf::Keyboard::isKeyPressed(sf::Keyboard::Up) || sf::Keyboard::isKeyPressed(sf::Keyboard::W)) {
             snake.changeDirection(0, -1);
         }
@@ -211,13 +235,23 @@ void GameLogic::update() {
     // reduce fruit countdown
     fruitCountdown -= delta;
 
-    // portal regrow auto-growth while in portal mode
-    if (inPortalMode && (int)snake.getBody().size() < portalTargetLength) {
-        portalRegrowAccum += delta;
-        if (portalRegrowAccum >= portalRegrowInterval) {
-            portalRegrowAccum -= portalRegrowInterval;
-            snake.grow();
+    // Handle portal exit countdown AND regrow during countdown
+    if (portalExitCountdownActive) {
+        portalExitCountdown -= delta;
+        // Regrow while countdown is active (snake forming as it exits)
+        if ((int)snake.getBody().size() < portalTargetLength) {
+            portalRegrowAccum += delta;
+            if (portalRegrowAccum >= portalRegrowInterval) {
+                portalRegrowAccum -= portalRegrowInterval;
+                snake.grow();
+            }
         }
+        if (portalExitCountdown <= 0.f) {
+            portalExitCountdownActive = false;
+            // No inmunidad: la serpiente ya puede morir desde que sale
+        }
+        // Permitir movimiento y colisión desde el primer frame tras salir
+        // (no return aquí)
     }
 
     snake.update();
@@ -229,52 +263,85 @@ void GameLogic::update() {
         // deactivate entrance
         portalEntrance.active = false;
 
-        // regenerate barriers randomly (avoid current snake body positions)
-        barriers.generateRandom(rng, gridWidth, gridHeight, snake.getBody());
-
-        // choose exit location in new map
-        std::uniform_int_distribution<int> distX(barriers.getMinX() + 1, barriers.getMaxX() - 1);
-        std::uniform_int_distribution<int> distY(barriers.getMinY() + 1, barriers.getMaxY() - 1);
-        for (int tries = 0; tries < 300; ++tries) {
-            int ex = distX(rng);
-            int ey = distY(rng);
-            Cell ec{ex, ey};
+        // Elegir primero la ubicación de salida segura y reservar área
+        std::uniform_int_distribution<int> distX(barriers.getMinX() + 3, barriers.getMaxX() - 3);
+        std::uniform_int_distribution<int> distY(barriers.getMinY() + 3, barriers.getMaxY() - 3);
+        bool found = false;
+        std::vector<Cell> safeArea;
+        int ex = gridWidth / 2, ey = gridHeight / 2;
+        for (int tries = 0; tries < 500 && !found; ++tries) {
+            ex = distX(rng);
+            ey = distY(rng);
+            // Verificar que haya espacio para toda la serpiente hacia arriba
             bool ok = true;
-            for (const auto &f : fruits) if (f.x == ex && f.y == ey) { ok = false; break; }
-            if (ok && !barriers.checkCollision(ec)) {
-                portalExit.x = ex; portalExit.y = ey; portalExit.active = true; portalExit.isExit = true;
-                break;
+            std::vector<Cell> tempSafe;
+            for (int i = 0; i < oldLen; ++i) {
+                Cell c{ex, ey - i};
+                tempSafe.push_back(c);
+                // Reservar también un área de 1 bloque alrededor de cada segmento
+                for (int dx = -1; dx <= 1; ++dx) {
+                    for (int dy = -1; dy <= 1; ++dy) {
+                        Cell adj{c.x + dx, c.y + dy};
+                        if (adj.x >= 0 && adj.x < gridWidth && adj.y >= 0 && adj.y < gridHeight)
+                            tempSafe.push_back(adj);
+                    }
+                }
+            }
+            // Quitar duplicados
+            std::sort(tempSafe.begin(), tempSafe.end(), [](const Cell&a, const Cell&b){ return a.x==b.x?a.y<b.y:a.x<b.x; });
+            tempSafe.erase(std::unique(tempSafe.begin(), tempSafe.end(), [](const Cell&a, const Cell&b){ return a.x==b.x && a.y==b.y; }), tempSafe.end());
+            // Comprobar que no hay paredes en el área
+            for (const auto& c : tempSafe) {
+                if (barriers.checkCollision(c)) { ok = false; break; }
+            }
+            if (ok) {
+                safeArea = tempSafe;
+                found = true;
             }
         }
+        if (!found) {
+            // Fallback: solo la cabeza y su alrededor
+            ex = gridWidth / 2; ey = gridHeight / 2;
+            safeArea.clear();
+            for (int dx = -1; dx <= 1; ++dx)
+                for (int dy = -1; dy <= 1; ++dy)
+                    safeArea.push_back({ex + dx, ey + dy});
+        }
 
-        // teleport snake to exit and shrink to 1, make invulnerable until regrow
+        // Regenerar barreras evitando el área segura
+        barriers.generateRandom(rng, gridWidth, gridHeight, safeArea);
+
+        // Colocar la serpiente completa saliendo hacia arriba
         std::vector<Cell> nb;
-        nb.push_back({portalExit.x, portalExit.y});
+        for (int i = 0; i < oldLen; ++i) nb.push_back({ex, ey - i});
         snake.setBody(nb);
-        snake.shrinkTo(1);
-        inPortalMode = true;
+        snake.changeDirection(0, -1);
+        portalExit.x = ex; portalExit.y = ey; portalExit.active = true; portalExit.isExit = true;
         portalTargetLength = oldLen;
-        // reset regrow accumulator
         portalRegrowAccum = 0.f;
+        portalExitCountdownActive = true;
+        portalExitCountdown = 1.0f; // Solo 1 segundo de pausa visual
+        fruits.clear();
+        lastSpawnCheck = elapsedPlaySeconds;
+        spawnFood();
     }
     
-    // Comprobar colisión con barreras (omit during portal invulnerability)
-    if (!inPortalMode && barriers.checkCollision(head)) {
+    // Comprobar colisión con barreras (sin inmunidad tras portal)
+    if (barriers.checkCollision(head)) {
         gameOver = true;
         state = State::GameOver;
         finalElapsedSeconds = startClock.getElapsedTime().asSeconds() - pausedAccumSeconds;
-        // prepare score animation: base score + time bonus will be animated
         baseScoreOnGameOver = score;
         timeBonusRemaining = (int)finalElapsedSeconds;
         animatedScore = baseScoreOnGameOver;
         scoreAnimationDone = false;
         scoreAnimClock.restart();
-        awaitingNameEntry = false; // will be set after animation if record
+        awaitingNameEntry = false;
         return;
     }
 
-    // Comprobar colisión consigo misma
-    if (!inPortalMode && snake.checkSelfCollision()) {
+    // Comprobar colisión consigo misma (sin inmunidad tras portal)
+    if (snake.checkSelfCollision()) {
         gameOver = true;
         state = State::GameOver;
         finalElapsedSeconds = startClock.getElapsedTime().asSeconds() - pausedAccumSeconds;
@@ -333,8 +400,10 @@ void GameLogic::update() {
     // remove expired temporary fruits
     removeExpired(now);
 
-    // PORTAL: spawn entrance portal every X points
-    if (score >= nextPortalScore && !portalEntrance.active && !inPortalMode) {
+    // PORTAL: spawn entrance portal when score reaches a multiple of 30
+    if (score >= nextPortalScore && !portalEntrance.active) {
+        // Clear all existing fruits when portal appears
+        fruits.clear();
         // place entrance at random free cell
         std::uniform_int_distribution<int> distX(barriers.getMinX() + 1, barriers.getMaxX() - 1);
         std::uniform_int_distribution<int> distY(barriers.getMinY() + 1, barriers.getMaxY() - 1);
@@ -344,7 +413,6 @@ void GameLogic::update() {
             Cell c{px, py};
             bool ok = true;
             for (const auto &bcell : snake.getBody()) if (bcell == c) { ok = false; break; }
-            for (const auto &fw : fruits) if (fw.x == px && fw.y == py) { ok = false; break; }
             if (ok && !barriers.checkCollision(c)) {
                 portalEntrance.x = px; portalEntrance.y = py; portalEntrance.active = true; portalEntrance.isExit = false;
                 break;
@@ -352,12 +420,11 @@ void GameLogic::update() {
         }
     }
 
-    // If in portal mode, check if reached target length to exit
-    if (inPortalMode) {
+    // Si la serpiente ya alcanzó su tamaño original tras el portal, quitar el portal de salida
+    if (!portalExitCountdownActive && portalExit.active) {
         if ((int)snake.getBody().size() >= portalTargetLength) {
-            inPortalMode = false;
+            portalExit.active = false;
             portalTargetLength = 0;
-            // schedule next portal
             nextPortalScore += 30;
         }
     }
@@ -601,6 +668,38 @@ void GameLogic::draw(sf::RenderWindow& window) {
             s.setPosition((float)(f.x * blockSize) + (float)blockSize/2.f, (float)(f.y * blockSize) + (float)blockSize/2.f);
             window.draw(s);
         }
+
+        // Dibujar portal entrance y exit usando sprite si la textura está cargada
+        auto drawPortalSprite = [&](int px, int py, bool semiTransparent) {
+            if (portalTexture.getSize().x > 0 && portalTexture.getSize().y > 0) {
+                sf::Sprite portalSprite(portalTexture);
+                float texW = (float)portalTexture.getSize().x;
+                float texH = (float)portalTexture.getSize().y;
+                float sizeInPixels = (float)blockSize * renderer.getSpriteScale();
+                float scaleX = sizeInPixels / texW;
+                float scaleY = sizeInPixels / texH;
+                portalSprite.setScale(scaleX, scaleY);
+                portalSprite.setOrigin(texW/2.f, texH/2.f);
+                portalSprite.setPosition((float)(px * blockSize) + (float)blockSize/2.f, (float)(py * blockSize) + (float)blockSize/2.f);
+                if (semiTransparent) portalSprite.setColor(sf::Color(255,255,255,120));
+                window.draw(portalSprite);
+            } else {
+                // Fallback: rectángulo rojo
+                sf::RectangleShape portal({(float)blockSize, (float)blockSize});
+                portal.setFillColor(semiTransparent ? sf::Color(255,0,0,100) : sf::Color::Red);
+                portal.setPosition((float)px * blockSize, (float)py * blockSize);
+                window.draw(portal);
+            }
+        };
+        if (portalEntrance.active) {
+            drawPortalSprite(portalEntrance.x, portalEntrance.y, false);
+        }
+        if (portalExit.active) {
+            drawPortalSprite(portalExit.x, portalExit.y, portalExitCountdownActive);
+        }
+    // Al final del archivo, agregar la textura de portal como miembro
+
+    // --- Agregar miembro de textura de portal ---
     } else {
         // Fallback: dibujar rectángulos sólidos
         snake.draw(window, blockSize);
@@ -687,6 +786,32 @@ void GameLogic::draw(sf::RenderWindow& window) {
         float centerY = (float)(gridHeight * blockSize) / 2.f;
         countdownText.setPosition(centerX, centerY);
         window.draw(countdownText);
+    }
+
+    // Draw portal exit countdown (2-1-START)
+    if (portalExitCountdownActive && portalExit.active) {
+        int countNum = (int)std::ceil(portalExitCountdown);
+        if (countNum > 3) countNum = 3;
+        if (countNum < 0) countNum = 0;
+        
+        std::string countdownStr;
+        if (countNum == 0) {
+            countdownStr = "START!";
+        } else {
+            countdownStr = std::to_string(countNum - 1); // 2, 1 instead of 3, 2, 1
+        }
+        
+        sf::Text portalCountdownText(countdownStr, uiFont, std::max(60, (int)(blockSize * 3.0f)));
+        portalCountdownText.setFillColor(sf::Color::Magenta);
+        portalCountdownText.setOutlineColor(sf::Color::Black);
+        portalCountdownText.setOutlineThickness(3.f);
+        portalCountdownText.setStyle(sf::Text::Bold);
+        sf::FloatRect pcbounds = portalCountdownText.getLocalBounds();
+        portalCountdownText.setOrigin(pcbounds.width / 2.f, pcbounds.height / 2.f);
+        float centerX = (float)(gridWidth * blockSize) / 2.f;
+        float centerY = (float)(gridHeight * blockSize) / 2.f;
+        portalCountdownText.setPosition(centerX, centerY);
+        window.draw(portalCountdownText);
     }
 
     // If paused, draw blinking PAUSE text in center using titleFont and show resume keys
@@ -887,9 +1012,10 @@ void GameLogic::reset() {
     lastUpdateSeconds = 0.f;
     portalEntrance.active = false;
     portalExit.active = false;
-    inPortalMode = false;
     portalTargetLength = 0;
     nextPortalScore = 30;
+    portalExitCountdownActive = false;
+    portalExitCountdown = 0.f;
 }
 
 void GameLogic::setSpriteScale(float s) {
@@ -937,9 +1063,11 @@ void GameLogic::startGame() {
     lastUpdateSeconds = 0.f;
     portalEntrance.active = false;
     portalExit.active = false;
-    inPortalMode = false;
+    // inPortalMode eliminado
     portalTargetLength = 0;
     nextPortalScore = 30;
+    portalExitCountdownActive = false;
+    portalExitCountdown = 0.f;
     
     // Start countdown timer
     showCountdown = true;
@@ -1021,8 +1149,8 @@ void GameLogic::loadFruitTextures() {
 
 void GameLogic::spawnCheck(float nowSeconds) {
     std::uniform_real_distribution<float> dist01(0.f, 1.f);
-    const float pMera = 0.18f;
-    const float pOpe  = 0.05f;
+    const float pMera = 0.40f; // Incrementado para mayor frecuencia
+    const float pOpe  = 0.15f; // Incrementado para mayor frecuencia
 
     auto trySpawn = [&](Fruit::Type t, float duration){
         // don't spawn this type if one already exists
@@ -1056,8 +1184,8 @@ void GameLogic::spawnCheck(float nowSeconds) {
 
     // Gomu is the persistent single food handled by spawnFood()/eating.
     // Sporadic single-instance fruits: Mera and Ope
-    // Do not spawn sporadic fruits if score has reached portal threshold (30)
-    if (score < 30) {
+    // Do not spawn sporadic fruits if portal entrance is active
+    if (!portalEntrance.active && !portalExitCountdownActive) {
         if (dist01(rng) < pMera) trySpawn(Fruit::Type::Mera, 4.f);
         if (dist01(rng) < pOpe)  trySpawn(Fruit::Type::Ope, 2.f);
     }
