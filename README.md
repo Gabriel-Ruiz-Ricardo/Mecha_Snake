@@ -1,60 +1,67 @@
-# Snake++
-Videojuego clásico de Snake con barreras rectangular cerrada que encierra la serpiente.
-Proyecto final de Programación Avanzada. 
-Centro de Enseñanza Técnica Industrial.
-Grupo: 3E.     Registros: 24310398 - 24310399.
+# 🐍 Mecha-Snake 🚪
 
-## Características
-- **Serpiente controlable**: Usa flechas o WASD para mover
-- **Barreras rectangulares**: Forman un rectángulo cerrado que encierra el área de juego
-- **Comida**: Come items rojos para crecer y aumentar puntuación
-- **Colisión con barreras**: Choca contra los muros blancos → Game Over
-- **Colisión consigo misma**: Game Over si la serpiente se choca
-- **Reinicio**: Presiona R después de Game Over para reiniciar
+## 🎯 OBJETIVO
+[cite_start]Llevar al usuario a través del clásico juego de Snake, mientras se aventura hacia portales que lo transportarán a **nuevos mapas**[cite: 1].
 
-## Estructura del Proyecto
-```
-Mecha_Snake/
-├── include/
-│   ├── Snake.hpp        # Declaración clase Snake
-│   ├── Barrier.hpp      # Declaración clase Barrier (barreras rectangulares)
-│   ├── GameLogic.hpp    # Declaración clase GameLogic
-│   └── Common.hpp       # Definiciones comunes (struct Cell)
-├── src/
-│   ├── 04_Main.cpp      # Punto de entrada y loop principal
-│   ├── 01_Snake.cpp     # Implementación Snake
-│   ├── 02_Barrier.cpp   # Implementación Barrier
-│   └── 03_GameLogic.cpp # Implementación GameLogic
-├── bin/
-│   └── Snake.exe        # Ejecutable compilado
-├── makefile             # Archivo de compilación
-└── README.md            # Este archivo
-```
+---
 
-## Compilación
-Asegúrate de tener SFML instalado. Luego ejecuta:
-```bash
-make
-```
+## 🎮 CONTROLES
+El movimiento de la serpiente puede controlarse con dos conjuntos de teclas:
+* [cite_start]**W/A/S/D** [cite: 2]
+* [cite_start]**↑/↓/→/←** [cite: 2]
 
-O compila manualmente:
-```bash
-g++ src/04_Main.cpp src/01_Snake.cpp src/02_Barrier.cpp src/03_GameLogic.cpp -o bin/Snake.exe -lsfml-graphics -lsfml-window -lsfml-system -lsfml-audio -Iinclude
-```
+---
 
-## Ejecución
-```bash
-.\bin\Snake.exe
-```
+## 🛠️ MÉCANICAS
 
-## Controles
-- **Flechas o WASD**: Mover la serpiente
-- **R**: Reiniciar el juego después de Game Over
-- **ESC**: Salir del juego
+### Mécanicas de Juego Base
+* [cite_start]**Movimiento:** El jugador controla la dirección de la serpiente (**Arriba, Abajo, Izquierda, Derecha**)[cite: 2].
+* [cite_start]**Crecimiento:** Cuando la serpiente consume un objeto (fruta), su longitud aumenta en **una unidad**[cite: 3].
+* [cite_start]**Objetivo Principal:** Consumir tantas frutas como sea posible para hacer crecer la serpiente y conseguir **puntos**[cite: 4].
+* **Condiciones de Derrota:**
+    * [cite_start]**Choque con Muro:** La serpiente golpea los límites del área de juego[cite: 5].
+    * [cite_start]**Choque con Cola:** La serpiente golpea su propio cuerpo[cite: 6].
 
-## Notas Técnicas
-- Las barreras forman un rectángulo cerrado que contiene toda el área de juego
-- La serpiente comienza en el centro del rectángulo
-- La comida solo aparece dentro del área delimitada por las barreras
-- No hay envoltura de bordes; la serpiente debe evitar las paredes
+### Mécanicas de Frutas y Puntuación
+* [cite_start]**Frutas de Puntuación Variable:** Existirán tres tipos de frutas, cada una otorgando una cantidad de puntos distinta[cite: 6].
+    * [cite_start]*Ejemplo:* **Goma goma** = 1 punto, **Mero mero** = 5 puntos, **Upe upe** = 10 puntos[cite: 6].
+* **Puntuación Acumulativa:** Se mantiene un contador de puntos total. [cite_start]El objetivo es alcanzar **30 puntos para abrir el portal**[cite: 7].
+* [cite_start]**Contador de Recolección:** Cada fruta consumida aumenta un contador que permite seguir recolectando[cite: 8].
 
+> [!NOTE]
+> [cite_start]Es importante diferenciar entre el **Puntaje** (la meta de 30) y el **Crecimiento/Progreso** (la longitud de la serpiente)[cite: 9]. [cite_start]Una fruta de 5 puntos haría crecer la serpiente lo mismo que una de 1 punto, pero te acercaría más rápido al portal[cite: 10].
+
+---
+
+## ✨ CARACTERÍSTICAS
+* [cite_start]**Juego de Habilidad y Reflejos:** Un núcleo de juego rápido y reactivo basado en el control direccional en una cuadrícula[cite: 11].
+* [cite_start]**Progresión por Puntuación:** El avance a través de los niveles no depende de la longitud de la serpiente, sino de un **contador de puntos acumulados**[cite: 12].
+* [cite_start]**Riesgo vs. Recompensa en Recolección:** Introduce la elección estratégica de buscar frutas de alto valor (ej. 5 puntos) para alcanzar el portal más rápido, versus frutas de bajo valor (ej. 1 punto) que son potencialmente más fáciles de alcanzar[cite: 13].
+* [cite_start]**Posiciones Aleatorias:** Tanto las frutas como el portal aparecen en posiciones aleatorias dentro del mapa disponible, manteniendo la imprevisibilidad[cite: 14].
+
+---
+
+## 💻 TECNOLOGÍAS
+* **Lenguaje:** C++
+* **Librerías adicionales:** SMF
+
+---
+
+## 👥 EQUIPO
+* [cite_start]**Líder:** Gabriel Alejandro Ruiz Ricardo (@Gabriel-Ruiz-Ricardo) [cite: 15]
+* [cite_start]**Integrante:** Zayra Elizabeth Rivera Mendoza (@Elizabeth398) [cite: 15]
+
+---
+
+## 📄 CREDITOS
+
+### Assets
+* [cite_start]**Música:** opengameart.org [cite: 16]
+* [cite_start]**Fuente Minecraft:** https://www.dafont.com/es/minecraft.font [cite: 16]
+* [cite_start]**Fuente Homoarakhan:** https://www.dafont.com/font-comment.php?file=homoarakhan [cite: 16]
+
+### Referencia
+* Snake
+
+### Agradecimientos
+* Prof. Jose Ramon Navarro - Ceti Colomos
